@@ -226,7 +226,7 @@ function samplePathForMap(
     indices.add(Math.min(Math.max(idx, 0), lastIndex));
   }
 
-  return [...indices].sort((a, b) => a - b).map((i) => coords[i]);
+  return Array.from(indices).sort((a, b) => a - b).map((i) => coords[i]);
 }
 
 function extractCoordinates(
