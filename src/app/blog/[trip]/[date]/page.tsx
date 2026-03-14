@@ -13,6 +13,7 @@ import {
 import { DayGallery } from "@/components/DayGallery";
 import { HeroBackgroundImage } from "@/components/HeroBackgroundImage";
 import { MarkdownProse } from "@/components/MarkdownProse";
+import type { TrailStats } from "@/lib/trailMap";
 
 type Params = {
   trip: string;
@@ -152,18 +153,12 @@ async function getDayData(tripParam: string, dateParam: string) {
     hasMapElevation ? await getSignedR2Url(client, mapElevationKey) : null;
 
   const trailStatsKey = `${basePrefix}outputs/trail_stats.json`;
-  let trailStats: {
-    distanceKm: number;
-    elevationGainM: number;
-    elevationLossM: number;
-    maxEleM: number;
-    minEleM: number;
-  } | null = null;
+  let trailStats: TrailStats | null = null;
   if (await objectExists(client, trailStatsKey)) {
     const raw = await getTextObject(client, trailStatsKey);
     if (raw) {
       try {
-        trailStats = JSON.parse(raw) as typeof trailStats;
+        trailStats = JSON.parse(raw) as TrailStats;
       } catch {
         trailStats = null;
       }
