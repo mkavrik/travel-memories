@@ -115,7 +115,7 @@ async function getDayData(tripParam: string, dateParam: string) {
     const base = filename.replace(/_display\.jpg$/i, "");
     if (!byBasename.has(base)) byBasename.set(base, key);
   }
-  const galleryDisplayKeys = [...byBasename.values()];
+  const galleryDisplayKeys = Array.from(byBasename.values());
 
   // Vynech z galerie hero fotku (ta je nahoře jako primaryUrl)
   const heroBasename = heroFilename

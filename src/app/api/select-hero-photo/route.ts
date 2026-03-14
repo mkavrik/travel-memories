@@ -129,7 +129,7 @@ async function getTripPhotoCandidates(tripName: string) {
 
   // Pouze fotky s existující _thumb.jpg, max 40 pro manuální náhled
   const candidates: { key: string; filename: string; url: string }[] = [];
-  for (const { key, filename } of byFilename.values()) {
+  for (const { key, filename } of Array.from(byFilename.values())) {
     if (candidates.length >= MAX_MANUAL_PHOTOS) break;
     const thumbKey = buildCacheKey(key, CACHE_SUFFIX_THUMB);
     if (!(await objectExists(client, thumbKey))) continue;

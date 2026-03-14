@@ -142,7 +142,7 @@ async function getTripData(tripParam: string) {
     if (!byBase.has(base)) byBase.set(base, key);
   }
   const summaryGalleryPhotos = await Promise.all(
-    [...byBase.values()].map(async (displayKey) => {
+    Array.from(byBase.values()).map(async (displayKey) => {
       const url = await getSignedR2Url(client, displayKey);
       return { key: displayKey, url, displayUrl: url };
     }),
