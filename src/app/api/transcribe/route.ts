@@ -115,7 +115,7 @@ async function transcribeWithWhisper(
   }
 
   const formData = new FormData();
-  const blob = new Blob([audioBuffer], { type: "audio/m4a" });
+  const blob = new Blob([new Uint8Array(audioBuffer)], { type: "audio/m4a" });
 
   formData.append("file", blob, filename);
   formData.append("model", "whisper-1");
