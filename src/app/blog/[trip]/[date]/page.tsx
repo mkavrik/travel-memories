@@ -15,7 +15,10 @@ import { HeroBackgroundImage } from "@/components/HeroBackgroundImage";
 import { VideoGridWithLightbox } from "@/components/VideoGridWithLightbox";
 import { MarkdownProse } from "@/components/MarkdownProse";
 import type { TrailStats } from "@/lib/trailMap";
-import { getStreamVideoDetails } from "@/lib/cloudflareStream";
+import {
+  type StreamVideoDetails,
+  getStreamVideoDetails,
+} from "@/lib/cloudflareStream";
 
 type Params = {
   trip: string;
