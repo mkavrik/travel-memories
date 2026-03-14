@@ -12,8 +12,10 @@ import {
 } from "@/lib/r2";
 import { DayGallery } from "@/components/DayGallery";
 import { HeroBackgroundImage } from "@/components/HeroBackgroundImage";
+import { VideoGridWithLightbox } from "@/components/VideoGridWithLightbox";
 import { MarkdownProse } from "@/components/MarkdownProse";
 import type { TrailStats } from "@/lib/trailMap";
+import { getStreamVideoDetails } from "@/lib/cloudflareStream";
 
 type Params = {
   trip: string;
@@ -165,6 +167,49 @@ async function getDayData(tripParam: string, dateParam: string) {
     }
   }
 
+  // Stream videa: metadata z video/*_stream.json
+  const videoPrefix = `${basePrefix}video/`;
+  const videoObjects = await listObjects(client, videoPrefix);
+  const streamMetaKeys = videoObjects
+    .map((o) => o.Key ?? "")
+    .filter((k) => k.endsWith("_stream.json"));
+
+  const streamVideos: {
+    streamId: string;
+    filename: string;
+    width: number;
+    height: number;
+    isLandscape: boolean;
+  }[] = [];
+
+  for (const key of streamMetaKeys) {
+    const raw = await getTextObject(client, key);
+    if (!raw) continue;
+    try {
+      const meta = JSON.parse(raw) as { streamId?: string; filename?: string };
+      if (!meta.streamId || !meta.filename) continue;
+
+      let details: StreamVideoDetails | null = null;
+      try {
+        details = await getStreamVideoDetails(meta.streamId);
+      } catch {
+        // keep details null, use fallback
+      }
+
+      const w = details?.width ?? 16;
+      const h = details?.height ?? 9;
+      streamVideos.push({
+        streamId: meta.streamId,
+        filename: meta.filename,
+        width: w,
+        height: h,
+        isLandscape: details?.isLandscape ?? w >= h,
+      });
+    } catch {
+      // ignore invalid JSON
+    }
+  }
+
   return {
     tripName,
     date,
@@ -174,6 +219,7 @@ async function getDayData(tripParam: string, dateParam: string) {
     mapTrailUrl,
     mapElevationUrl,
     trailStats,
+    streamVideos,
   };
 }
 
@@ -191,6 +237,7 @@ export default async function DayPage({
     mapTrailUrl,
     mapElevationUrl,
     trailStats,
+    streamVideos,
   } = await getDayData(params.trip, params.date);
 
   return (
@@ -269,6 +316,14 @@ export default async function DayPage({
             photos={galleryPhotos.filter((p) => Boolean(p.url))}
           />
         </div>
+
+        {/* Videa – Cloudflare Stream */}
+        {streamVideos.length > 0 && (
+          <div className="space-y-4">
+            <h2 className="text-base font-medium text-slate-100">Videa</h2>
+            <VideoGridWithLightbox videos={streamVideos} />
+          </div>
+        )}
 
         {/* Trasa dne – mapa a výškový profil */}
         <div className="space-y-4">

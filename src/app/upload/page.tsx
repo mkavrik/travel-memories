@@ -136,6 +136,20 @@ export default function UploadPage() {
   const [cleanupPhotosResult, setCleanupPhotosResult] = useState<
     string | null
   >(null);
+  const [isUploadingDayVideos, setIsUploadingDayVideos] = useState(false);
+  const [streamDayResult, setStreamDayResult] = useState<{
+    uploaded?: { filename: string; streamId: string }[];
+    skipped?: string[];
+    message?: string;
+    error?: string;
+  } | null>(null);
+  const [isSyncingAllVideos, setIsSyncingAllVideos] = useState(false);
+  const [streamSyncProgress, setStreamSyncProgress] = useState<string | null>(null);
+  const [streamSyncResult, setStreamSyncResult] = useState<{
+    uploaded?: number;
+    total?: number;
+    error?: string;
+  } | null>(null);
   const [heroLightbox, setHeroLightbox] = useState<{
     scope: "day" | "trip";
     filename: string;
@@ -780,6 +794,81 @@ export default function UploadPage() {
     }
   }
 
+  async function handleUploadDayVideosToStream() {
+    setStreamDayResult(null);
+    if (!tripName?.trim() || !date?.trim()) {
+      setStreamDayResult({ error: "Zadej název tripu a datum." });
+      return;
+    }
+    setIsUploadingDayVideos(true);
+    try {
+      const res = await fetch("/api/upload-day-videos-to-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tripName: tripName.trim(), date: date.trim() }),
+      });
+      const data = (await res.json()) as {
+        uploaded?: { filename: string; streamId: string }[];
+        skipped?: string[];
+        message?: string;
+        error?: string;
+      };
+      if (!res.ok) {
+        setStreamDayResult({ error: data.error ?? "Nahrání do Stream selhalo." });
+        return;
+      }
+      setStreamDayResult(data);
+    } catch (error) {
+      console.error(error);
+      setStreamDayResult({ error: "Nastala neočekávaná chyba." });
+    } finally {
+      setIsUploadingDayVideos(false);
+    }
+  }
+
+  async function handleSyncAllVideosToStream() {
+    setStreamSyncResult(null);
+    setStreamSyncProgress(null);
+    setIsSyncingAllVideos(true);
+    try {
+      const res = await fetch("/api/sync-all-videos-to-stream", {
+        method: "POST",
+      });
+      if (!res.ok || !res.body) {
+        setStreamSyncResult({
+          error: res.ok ? "Prázdná odpověď." : "Synchronizace selhala.",
+        });
+        return;
+      }
+      await readNdjsonStream<{
+        progress?: string;
+        current?: number;
+        total?: number;
+        done?: boolean;
+        uploaded?: number;
+        error?: string;
+      }>(res.body, (data) => {
+        if (data.error) {
+          setStreamSyncResult({ error: data.error });
+          return;
+        }
+        if (data.progress) setStreamSyncProgress(data.progress);
+        if (data.done && data.uploaded != null) {
+          setStreamSyncResult({
+            uploaded: data.uploaded,
+            total: data.total,
+          });
+        }
+      });
+    } catch (error) {
+      console.error(error);
+      setStreamSyncResult({ error: "Nastala neočekávaná chyba." });
+    } finally {
+      setIsSyncingAllVideos(false);
+      setStreamSyncProgress(null);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50 flex items-center justify-center p-4">
       <div className="w-full max-w-xl rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl shadow-slate-900/40 backdrop-blur">
@@ -1033,6 +1122,79 @@ export default function UploadPage() {
               </div>
             </div>
           )}
+
+          {/* Videa – Cloudflare Stream */}
+          <div className="space-y-2 border-t border-slate-800 pt-4">
+            <p className="text-xs font-medium text-slate-300">
+              Videa – Cloudflare Stream
+            </p>
+            <p className="text-xs text-slate-500">
+              Po nahrání .mov / .mp4 do R2 je nahraj do Stream pro kompresi a streaming. Na blogu se pak zobrazí v sekci Videa.
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+              <button
+                type="button"
+                onClick={handleUploadDayVideosToStream}
+                disabled={
+                  !tripName || !date || isUploadingDayVideos
+                }
+                className="rounded-lg border border-sky-600/60 bg-slate-900 px-4 py-2.5 text-xs font-medium text-sky-200 shadow-sm transition hover:border-sky-500 hover:text-sky-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
+              >
+                {isUploadingDayVideos ? "Nahrávám..." : "Nahrát videa do Stream"}
+              </button>
+              <span className="text-xs text-slate-500">
+                (pro vybraný den)
+              </span>
+              <button
+                type="button"
+                onClick={handleSyncAllVideosToStream}
+                disabled={isSyncingAllVideos}
+                className="rounded-lg border border-violet-600/60 bg-slate-900 px-4 py-2.5 text-xs font-medium text-violet-200 shadow-sm transition hover:border-violet-500 hover:text-violet-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
+              >
+                {isSyncingAllVideos ? "Synchronizuji..." : "Synchronizovat všechna videa do Stream"}
+              </button>
+            </div>
+            {streamSyncProgress != null && (
+              <p className="text-xs text-slate-400">{streamSyncProgress}</p>
+            )}
+            {streamDayResult && (
+              <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-xs">
+                {streamDayResult.error && (
+                  <p className="font-medium text-red-400">{streamDayResult.error}</p>
+                )}
+                {streamDayResult.message && !streamDayResult.error && (
+                  <p className="text-slate-300">{streamDayResult.message}</p>
+                )}
+                {streamDayResult.uploaded && streamDayResult.uploaded.length > 0 && (
+                  <ul className="mt-2 space-y-1 text-slate-400">
+                    {streamDayResult.uploaded.map(({ filename, streamId }) => (
+                      <li key={filename}>
+                        <span className="font-mono">{filename}</span> → Stream ID:{" "}
+                        <span className="font-mono text-sky-300">{streamId}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {streamDayResult.skipped && streamDayResult.skipped.length > 0 && (
+                  <p className="mt-1 text-slate-500">
+                    Přeskočeno (již v Stream): {streamDayResult.skipped.join(", ")}
+                  </p>
+                )}
+              </div>
+            )}
+            {streamSyncResult && (
+              <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-xs">
+                {streamSyncResult.error && (
+                  <p className="font-medium text-red-400">{streamSyncResult.error}</p>
+                )}
+                {!streamSyncResult.error && streamSyncResult.uploaded != null && (
+                  <p className="text-slate-300">
+                    Hotovo: nahráno {streamSyncResult.uploaded} z {streamSyncResult.total} videí do Stream.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Hero fotky */}
           <div className="space-y-3 border-t border-slate-800 pt-4">

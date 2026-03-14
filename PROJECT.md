@@ -315,6 +315,8 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - 🔜 Automatické střihání videa (krátké reels pro Instagram + delší video pro YouTube/blog)
 - 🔜 Rozšíření pro ostatní cestovatele
 - 🔜 Odhadovaná doba trvání trasy – Mapy.cz Route API nepodporuje ski routeType, rozdíl oproti webu ~50 min. Vrátit se později a prozkoumat přesnější řešení.
+- 🔜 Zabezpečení admin části (/upload) – přidat HTTP Basic Auth přes Vercel nebo jinou autentizaci
+- 🔜 Instagram agent
 
 ---
 
