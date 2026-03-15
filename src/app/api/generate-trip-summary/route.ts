@@ -25,7 +25,8 @@ function summaryNotesPrefix(tripName: string): string {
 }
 
 /**
- * Načte všechny vstupní materiály z R2 a složí je do jednoho textu.
+ * Načte surové vstupy ze summary: poznámky (notes) + přepis audia.
+ * Blog posty jednotlivých dní se nepředávají — agent pracuje jen s poznámkami.
  */
 async function buildTripSummaryInput(
   client: S3Client,
@@ -63,33 +64,11 @@ async function buildTripSummaryInput(
     parts.push("[PŘEPIS AUDIA SUMMARY]\n\n" + prepis.trim());
   }
 
-  // 3. Blog posty dní: trips/[tripName]/[datum]/outputs/blog_post.txt
-  const tripPrefix = `trips/${tripName.trim()}/`;
-  const allObjects = await listObjects(client, tripPrefix);
-  const dailyBlogKeys = allObjects
-    .map((o) => o.Key)
-    .filter((key): key is string => {
-      if (!key) return false;
-      const match = key.match(
-        /^trips\/[^/]+\/(\d{4}-\d{2}-\d{2})\/outputs\/blog_post\.txt$/,
-      );
-      return Boolean(match);
-    })
-    .sort();
-
-  for (const key of dailyBlogKeys) {
-    const date = key.match(/\/(\d{4}-\d{2}-\d{2})\//)?.[1] ?? "";
-    const text = await getTextObject(client, key);
-    if (text?.trim()) {
-      parts.push(`[BLOG POST - ${date}]\n\n` + text.trim());
-    }
-  }
-
   const input = parts.join("\n\n---\n\n");
   if (!input.trim()) {
     return {
       error:
-        "Žádné vstupní materiály (poznámky summary, přepis audia ani blog posty dní).",
+        "Žádné vstupní materiály (poznámky summary nebo přepis audia).",
     };
   }
 
@@ -127,7 +106,7 @@ export async function POST(request: Request) {
         send({ phase: "loading" });
 
         const client = createR2Client();
-        const inputResult = await buildTripSummaryInput(client, tripName);
+          const inputResult = await buildTripSummaryInput(client, tripName);
         if ("error" in inputResult) {
           send({ error: inputResult.error });
           controller.close();
@@ -142,10 +121,10 @@ export async function POST(request: Request) {
 
         send({ phase: "generating" });
 
-        const result = await runTripSummaryPipeline(
-          { input: inputResult.input, tripName },
-          (phase, iteration) => send({ phase, iteration }),
-        );
+        const result = await runTripSummaryPipeline({
+          input: inputResult.input,
+          tripName,
+        });
 
         await putTextObject(
           client,
@@ -157,7 +136,6 @@ export async function POST(request: Request) {
         send({
           phase: "done",
           preview: result.text,
-          iterations: result.iterations,
           blogPostKey: key,
         });
       } catch (err) {

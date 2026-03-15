@@ -71,7 +71,7 @@ async function cleanTranscriptWithClaude(rawTranscript: string): Promise<string>
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-5",
+      model: "claude-opus-4-6",
       max_tokens: 4000,
       system: systemPrompt,
       messages: [

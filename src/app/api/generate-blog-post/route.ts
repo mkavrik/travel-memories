@@ -94,7 +94,7 @@ export async function POST(request: Request) {
       await deleteObject(client, key);
     }
 
-    const { text: blogPostText, iterations } = await runBlogPostPipeline({
+    const { text: blogPostText } = await runBlogPostPipeline({
       notes,
       date,
       tripName,
@@ -112,7 +112,6 @@ export async function POST(request: Request) {
         message: "Blog post byl vygenerován a uložen.",
         blogPostKey: key,
         preview: blogPostText,
-        iterations,
       },
       { status: 200 },
     );

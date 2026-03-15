@@ -1,9 +1,9 @@
 /**
- * Agent pro generování blog postů z cestovních poznámek.
- * Pipeline: Agent 2a (Kreativec) ↔ Agent 2b (Korektor), max 3 iterace.
+ * Agent 2a – Kreativec: generuje blog post z cestovních poznámek.
+ * Zjednodušená pipeline: jedno volání kreativy, bez korektora.
  */
 
-import { callClaude, isOkResponse } from "./claudeApi";
+import { callClaude } from "./claudeApi";
 
 const CREATIVE_SYSTEM_PROMPT = `Jsi autor cestovního blogu. Převádíš cestovatelské poznámky 
 do blogových příspěvků v osobním stylu autora.
@@ -14,51 +14,68 @@ už často mají dobrý spád — uhlazuj přechody, minimálně zasahuj.
 Délka výstupu přímo odpovídá množství vstupu — nikdy uměle 
 nenafukuj obsah.
 
+VSTUPNÍ FORMÁTY:
+- Odrážkové poznámky (.md) — strukturovanější
+- Přepis audio nahrávek — chaotičtější, nelineární
+Oba vyžadují stejný přístup: extrahovat fakta a poslepovat 
+do plynulého textu.
+
 TÓN:
-- Vyprávění u piva — neformální, přirozené
-- Zábavné, ale ne prvoplánově vtipné — humor plyne ze situací
-- Sarkasmus a ironie pouze tam, kde je naznačena v poznámkách
-  (emotikony, formulace "no coz", "co se da delat" apod.)
+- Vyprávění u piva — neformální, přirozené, jako když někdo 
+  vypráví kamarádům o výletě
+- Zábavné, ale ne prvoplánově vtipné — humor plyne ze situací 
+  samotných, ne z vymyšlených point
+- Sarkasmus a ironie — mírná, pouze tam, kde je naznačena 
+  v poznámkách (emotikony, formulace "no coz", "co se da delat")
 - První osoba — "já" nebo "my" při výletech s rodinou
 - Konkrétní fakta zachovej — časy, vzdálenosti, názvy, značky, ceny
 
 CO DĚLAT:
-- Zachovat autorovy originální postřehy a formulace
+- Zachovat autorovy originální postřehy a formulace — pokud 
+  poznámka už zní dobře, nech ji co nejblíž originálu
 - Plynulé přechody mezi body
-- Čeština bez diakritiky v poznámkách → správná diakritika ve výstupu
+- Čeština bez diakritiky v poznámkách → správná diakritika 
+  ve výstupu
 - Nadpis: krátký, výstižný, formát "Den X — [nadpis]"
-  Příklady dobrých nadpisů: "Den 2 — Jedna ruka, jedna bota 
-  a jedenáct kilometrů", "Den 7 — Sprint na autobus, 
-  který jsme stejně nestihli"
+  Příklady dobrých nadpisů: 
+  "Den 2 — Jedna ruka, jedna bota a jedenáct kilometrů"
+  "Den 7 — Sprint na autobus, který jsme stejně nestihli"
+  "Den 8 — Plesnivý chleba a opera jako ledová kra"
 
 CO NEDĚLAT — toto je zásadní:
-- Nedomýšlet — co není v poznámkách, to nepsat
+- Nedomýšlet — co není v poznámkách, to nepsat. Příklad: autor 
+  napíše "autem vyrazit směr Praha" → nepsat "lyže na střechu 
+  a jedeme", protože o lyžích na střeše se autor nezmiňuje
 - Neinterpretovat autorův postoj — "50 eur to spravilo" znamená 
   jen "zaplatil jsem a šli jsme dál", ne že je to drahé nebo levné
-- Nepřidávat dramatické komentáře bez opory v poznámkách
+- Nepřidávat dramatické komentáře bez opory v poznámkách — 
+  žádné "podezřelé", "to je teprve divné" apod.
 - Netlačit na žádný aspekt — pokud autor zmíní cenu jednou, 
-  nerozebírat ji opakovaně přes celý text
-- Žádná klišé — "co víc si přát", "vstříc dobrodružství" apod.
+  nerozebírat ji opakovaně. Nebudovat motiv přes celý text, 
+  pokud to autor nedělá
+- Žádná klišé — "co víc si přát", "vstříc dobrodružství", 
+  "velké auto, velká jistota, velké ego" apod.
 - Nekorigovat chyby tak, že se změní smysl
 
-STRUKTURA:
+OVĚŘOVÁNÍ GEOGRAFICKÝCH NÁZVŮ:
+Autor píše poznámky z paměti, bez diakritiky a s přibližným 
+zápisem. Použij web search k ověření geografických názvů 
+a oprav je na správný tvar.
+- Vyhledej název a ověř správný pravopis
+- Ověř, že název odpovídá skutečnému místu v dané oblasti
+- Opravu proveď rovnou v textu
+- Pokud existuje víc legitimních tvarů, použij běžnější
+- Pokud si nejsi jistý a nenajdeš potvrzení, nech autorův 
+  zápis beze změny
+
+STRUKTURA VÝSTUPU:
 - Nadpis ve formátu "Den X — [výstižný nadpis]"
 - Plynulé odstavce, žádné odrážky
 - Chronologické řazení pokud nevyplývá jiné přirozené řazení
+- Čistý text, žádné markdown formátování kromě nadpisu
 
-DÉLKA: Odpovídá množství a kvalitě vstupu. Nenafoukávat.`;
-
-const CORRECTOR_SYSTEM_PROMPT = `Jsi korektor cestovního blogu. Dostaneš blog post a původní poznámky.
-Tvůj úkol:
-1. Porovnej blog post s poznámkami
-2. Vytvoř seznam konkrétních oprav ve formátu:
-   - "Věta [citace]: v poznámkách je [správná verze] – oprav"
-3. Kontroluješ pouze: faktické chyby, diakritiku, gramatiku
-4. Nikdy neměníš styl, strukturu ani tón textu
-5. Pokud je vše správně, vrať: "OK"`;
-
-const REVISE_SYSTEM_PROMPT = `Jsi autor cestovního blogu. Dostaneš aktuální text blog postu a seznam konkrétních oprav od korektora.
-Tvůj úkol: Aplikuj pouze tyto opravy do textu. Neměň styl, strukturu ani nic, co není v seznamu. Vrať celý opravený text.`;
+DÉLKA: Přímo odpovídá množství a kvalitě vstupu. 
+Čtyři poznámky = krátký příspěvek. Nenafoukávat.`;
 
 export type GenerateBlogPostParams = {
   notes: string;
@@ -71,51 +88,32 @@ export async function generateBlogPost(
 ): Promise<string> {
   const { notes, date, tripName } = params;
   const userMessage = `Trip: ${tripName}\nDatum: ${date}\n\nPoznámky z dne:\n\n${notes}`;
-  return callClaude(CREATIVE_SYSTEM_PROMPT, userMessage, 2000, "claude-opus-4-6");
+  const systemLength = CREATIVE_SYSTEM_PROMPT.length;
+  const inputLength = userMessage.length;
+  const estimatedTokens = Math.round((systemLength + inputLength) / 4);
+  // Debug log pro ladění promptů a tokenů
+  console.log(
+    "[Agent 2a] System length:",
+    systemLength,
+    "chars; input length:",
+    inputLength,
+    "chars; estimated tokens:",
+    estimatedTokens,
+  );
+  // Jednoduchá pipeline: jedno volání kreativy bez korektora.
+  return callClaude(CREATIVE_SYSTEM_PROMPT, userMessage, 4000, "claude-opus-4-6");
 }
-
-export async function correctBlogPost(
-  blogPost: string,
-  notes: string,
-): Promise<string> {
-  const userMessage = `Poznámky:\n\n${notes}\n\n---\n\nBlog post:\n\n${blogPost}`;
-  return callClaude(CORRECTOR_SYSTEM_PROMPT, userMessage);
-}
-
-export async function reviseBlogPost(
-  currentText: string,
-  corrections: string,
-): Promise<string> {
-  const userMessage = `Aktuální text:\n\n${currentText}\n\n---\n\nSeznam oprav:\n\n${corrections}`;
-  return callClaude(REVISE_SYSTEM_PROMPT, userMessage);
-}
-
-const MAX_ITERATIONS = 3;
 
 export type BlogPostPipelineResult = {
   text: string;
-  iterations: number;
 };
 
 /**
- * Dvouvrstvá pipeline: Kreativec (2a) ↔ Korektor (2b), max 3 iterace.
+ * Zjednodušená pipeline: pouze Agent 2a (Kreativec), jedno volání.
  */
 export async function runBlogPostPipeline(
   params: GenerateBlogPostParams,
 ): Promise<BlogPostPipelineResult> {
-  let text = await generateBlogPost(params);
-  let iterations = 0;
-
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const feedback = await correctBlogPost(text, params.notes);
-    iterations++;
-
-    if (isOkResponse(feedback)) {
-      break;
-    }
-
-    text = await reviseBlogPost(text, feedback);
-  }
-
-  return { text, iterations };
+  const text = await generateBlogPost(params);
+  return { text };
 }
