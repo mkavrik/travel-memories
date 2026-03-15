@@ -20,6 +20,7 @@ import {
   selectHeroPhotoWithClaude,
   type HeroPhotoCandidate,
 } from "@/lib/agents/heroPhotoAgent";
+import { invalidateCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
@@ -233,6 +234,12 @@ export async function POST(request: Request) {
         "application/json",
       );
 
+      try {
+        await invalidateCache(tripName, date ?? undefined);
+      } catch (e) {
+        console.warn("[SELECT_HERO_PHOTO] Cache invalidation failed:", e);
+      }
+
       const chosen = candidates.find(
         (c) => c.filename === originalFilename || toOriginalHeroFilename(c.filename) === originalFilename,
       );
@@ -316,6 +323,12 @@ export async function POST(request: Request) {
       JSON.stringify({ filename: originalFilename, reason: selection.reason }),
       "application/json",
     );
+
+    try {
+      await invalidateCache(tripName);
+    } catch (e) {
+      console.warn("[SELECT_HERO_PHOTO] Cache invalidation failed:", e);
+    }
 
     const chosen = candidates.find(
       (c) => c.filename === originalFilename || toOriginalHeroFilename(c.filename) === originalFilename,

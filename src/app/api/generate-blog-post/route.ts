@@ -8,6 +8,7 @@ import {
   deleteObject,
 } from "@/lib/r2";
 import { runBlogPostPipeline } from "@/lib/agents/blogPostAgent";
+import { invalidateCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
@@ -106,6 +107,12 @@ export async function POST(request: Request) {
       blogPostText,
       "text/plain; charset=utf-8",
     );
+
+    try {
+      await invalidateCache(tripName, date);
+    } catch (e) {
+      console.warn("[GENERATE_BLOG_POST] Cache invalidation failed:", e);
+    }
 
     return NextResponse.json(
       {

@@ -1,5 +1,6 @@
 import { createR2Client, isOriginalImage, listObjects } from "@/lib/r2";
 import { ensureAllCaches } from "@/lib/photoCache";
+import { invalidateCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
@@ -67,6 +68,14 @@ export async function POST(request: Request) {
               error: `Chyba u ${imageKeys[i].split("/").pop()}: ${(err as Error).message}`,
             });
           }
+        }
+        try {
+          await invalidateCache(
+            tripName,
+            date === "summary" || !date ? undefined : date,
+          );
+        } catch (e) {
+          console.warn("[CONVERT_PHOTOS] Cache invalidation failed:", e);
         }
         send({ done: true, converted: total, total });
         controller.close();

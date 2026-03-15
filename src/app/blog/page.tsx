@@ -1,20 +1,14 @@
 import { Metadata } from "next";
-import {
-  R2_BUCKET_NAME,
-  createR2Client,
-  displayCacheKey,
-  getSignedR2Url,
-  getTextObject,
-  isOriginalImage,
-  listObjects,
-  listTripPrefixes,
-  objectExists,
-} from "@/lib/r2";
+import { createR2Client, getSignedR2Url } from "@/lib/r2";
+import { R2_BUCKET_NAME } from "@/lib/r2";
+import { getTripNames, getCachedTripData } from "@/lib/cache";
 import { TripsWorldMap } from "@/components/TripsWorldMap";
 
 export const metadata: Metadata = {
   title: "Blog | Travel Memories",
 };
+
+export const revalidate = 3600;
 
 type TripCard = {
   name: string;
@@ -22,93 +16,18 @@ type TripCard = {
   firstDate: string | null;
 };
 
-async function getTripsForBlog(client: ReturnType<typeof createR2Client>): Promise<TripCard[]> {
-  const tripNames = await listTripPrefixes(client);
-
-  const trips: TripCard[] = [];
-
-  for (const trip of tripNames) {
-    const basePrefix = `trips/${trip}/`;
-    const summaryPhotosPrefix = `${basePrefix}summary/photos/`;
-    const summaryPhotos = await listObjects(client, summaryPhotosPrefix);
-
-    const imagePhotos = summaryPhotos.filter((obj) =>
-      isOriginalImage(obj.Key ?? ""),
-    );
-
-    // Dny tripu (pro hledání hero v dnech a pro firstDate)
-    const dates = new Set<string>();
-    const objects = await listObjects(client, basePrefix);
-    for (const obj of objects) {
-      const key = obj.Key || "";
-      const parts = key.replace(basePrefix, "").split("/");
-      const maybeDate = parts[0];
-      if (/^\d{4}-\d{2}-\d{2}$/.test(maybeDate)) {
-        dates.add(maybeDate);
-      }
-    }
-    const sortedDates = Array.from(dates).sort();
-    const firstDate = sortedDates[0] ?? null;
-
-    let coverUrl: string | null = null;
-
-    // 1) Načti filename z hero_photo.json (např. IMG_9384.heic) → basename IMG_9384
-    const heroMetaKey = `${basePrefix}summary/outputs/hero_photo.json`;
-    if (await objectExists(client, heroMetaKey)) {
-      const raw = await getTextObject(client, heroMetaKey);
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw) as { filename?: string };
-          const filename = (parsed.filename ?? "").trim();
-          if (filename) {
-            const basename = filename.replace(/\.[^.]+$/, "");
-            // 2–4) Cesta k display v summary: trips/[tripName]/summary/photos/cache/BASENAME_display.jpg
-            const summaryDisplayKey = `${basePrefix}summary/photos/cache/${basename}_display.jpg`;
-            if (await objectExists(client, summaryDisplayKey)) {
-              coverUrl = await getSignedR2Url(client, summaryDisplayKey);
-            } else {
-              // 5–6) Ve summary není → hledej ve všech dnech
-              for (const date of sortedDates) {
-                const dayDisplayKey = `${basePrefix}${date}/photos/cache/${basename}_display.jpg`;
-                if (await objectExists(client, dayDisplayKey)) {
-                  coverUrl = await getSignedR2Url(client, dayDisplayKey);
-                  break;
-                }
-              }
-            }
-          }
-        } catch {
-          // ignore invalid JSON
-        }
-      }
-    }
-
-    // 7) Fallback: první dostupná fotka (summary cache nebo první _display z dne)
-    if (!coverUrl && imagePhotos[0]?.Key) {
-      const key = imagePhotos[0].Key;
-      const prefix = key.replace(/[^/]+$/, "");
-      const filename = key.split("/").pop() ?? "";
-      const dKey = displayCacheKey(prefix, filename);
-      if (await objectExists(client, dKey)) {
-        coverUrl = await getSignedR2Url(client, dKey);
-      }
-    }
-    if (!coverUrl) {
-      const firstDisplay = objects.find((obj) => {
-        const key = obj.Key ?? "";
-        return (
-          key.includes("/photos/cache/") &&
-          key.toLowerCase().endsWith("_display.jpg")
-        );
-      });
-      if (firstDisplay?.Key) {
-        coverUrl = await getSignedR2Url(client, firstDisplay.Key);
-      }
-    }
-
-    trips.push({ name: trip, coverUrl, firstDate });
-  }
-
+async function getTripsForBlog(): Promise<TripCard[]> {
+  const tripNames = await getTripNames();
+  const trips: TripCard[] = await Promise.all(
+    tripNames.map(async (name) => {
+      const data = await getCachedTripData(name);
+      return {
+        name,
+        coverUrl: data.coverUrl,
+        firstDate: data.firstDate,
+      };
+    }),
+  );
   return trips;
 }
 
@@ -116,10 +35,9 @@ export default async function BlogHomePage() {
   if (!R2_BUCKET_NAME) {
     throw new Error("R2 bucket is not configured.");
   }
-
   const client = createR2Client();
 
-  // Profilová hero fotka
+  // Profilová hero fotka (ne cachovaná)
   let heroUrl: string | null = null;
   try {
     heroUrl = await getSignedR2Url(client, "profile/hero.jpg");
@@ -127,7 +45,7 @@ export default async function BlogHomePage() {
     heroUrl = null;
   }
 
-  const trips = await getTripsForBlog(client);
+  const trips = await getTripsForBlog();
 
   return (
     <main className="min-h-screen bg-[#050509] text-slate-50">

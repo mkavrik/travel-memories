@@ -1,24 +1,10 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import {
-  R2_BUCKET_NAME,
-  createR2Client,
-  displayCacheKey,
-  getSignedR2Url,
-  getTextObject,
-  isOriginalImage,
-  listObjects,
-  objectExists,
-} from "@/lib/r2";
+import { getCachedDayData, getCachedPhotoUrls } from "@/lib/cache";
 import { DayGallery } from "@/components/DayGallery";
 import { HeroBackgroundImage } from "@/components/HeroBackgroundImage";
 import { VideoGridWithLightbox } from "@/components/VideoGridWithLightbox";
 import { MarkdownProse } from "@/components/MarkdownProse";
-import type { TrailStats } from "@/lib/trailMap";
-import {
-  type StreamVideoDetails,
-  getStreamVideoDetails,
-} from "@/lib/cloudflareStream";
 
 type Params = {
   trip: string;
@@ -37,192 +23,46 @@ export async function generateMetadata({
   };
 }
 
+export const revalidate = 3600;
+
 async function getDayData(tripParam: string, dateParam: string) {
-  const client = createR2Client();
   const tripName = decodeURIComponent(tripParam);
   const date = decodeURIComponent(dateParam);
-  const basePrefix = `trips/${tripName}/${date}/`;
 
-  if (!R2_BUCKET_NAME) {
-    throw new Error("R2 bucket is not configured.");
-  }
+  const [dayData, photoUrls] = await Promise.all([
+    getCachedDayData(tripName, date),
+    getCachedPhotoUrls(tripName, date),
+  ]);
 
-  const allObjects = await listObjects(client, basePrefix);
-  if (allObjects.length === 0) {
+  if (!dayData) {
     notFound();
   }
 
-  // Hero / cover photo – pouze originály z photos/ (ne z /cache/)
-  const photos = await listObjects(client, `${basePrefix}photos/`);
-  const imagePhotos = photos.filter((obj) =>
-    isOriginalImage(obj.Key ?? ""),
-  );
-
-  // Nejprve zkus hero_photo.json, jinak fallback na první fotku
-  let heroUrl: string | null = null;
-  let heroFilename: string | null = null;
-  const heroMetaKey = `${basePrefix}outputs/hero_photo.json`;
-  if (await objectExists(client, heroMetaKey)) {
-    const rawHero = await getTextObject(client, heroMetaKey);
-    if (rawHero) {
-      try {
-        const parsed = JSON.parse(rawHero) as {
-          filename?: string;
-          reason?: string;
-        };
-        if (parsed.filename) {
-          heroFilename = parsed.filename;
-          const heroObj =
-            imagePhotos.find((obj) =>
-              (obj.Key || "").toLowerCase().endsWith(
-                `/${parsed.filename!.toLowerCase()}`,
-              ),
-            ) ?? null;
-          if (heroObj?.Key) {
-            const key = heroObj.Key;
-            const photosPrefix = key.replace(/[^/]+$/, "");
-            const filename = key.split("/").pop() ?? "";
-            const dKey = displayCacheKey(photosPrefix, filename);
-            if (await objectExists(client, dKey)) {
-              heroUrl = await getSignedR2Url(client, dKey);
-            }
-          }
-        }
-      } catch {
-        // ignore invalid hero_photo.json
-      }
-    }
-  }
-
-  if (!heroUrl && imagePhotos[0]?.Key) {
-    const key = imagePhotos[0].Key;
-    const photosPrefix = key.replace(/[^/]+$/, "");
-    const filename = key.split("/").pop() ?? "";
-    const dKey = displayCacheKey(photosPrefix, filename);
-    if (await objectExists(client, dKey)) {
-      heroUrl = await getSignedR2Url(client, dKey);
-    }
-  }
-
-  // Blog post text
-  const blogPostKey = `${basePrefix}outputs/blog_post.txt`;
-  const blogPost = (await getTextObject(client, blogPostKey)) ?? null;
-
-  // Gallery: POUZE _display.jpg z /cache/, bez HEIC originálů a bez _thumb/_ai
-  const allPhotoKeys = photos.map((obj) => obj.Key ?? "").filter(Boolean);
-  const displayOnly = allPhotoKeys.filter(
-    (key) =>
-      key.includes("/cache/") && key.toLowerCase().endsWith("_display.jpg"),
-  );
-  // Deduplikace podle basename (IMG_001_display.jpg -> IMG_001)
-  const byBasename = new Map<string, string>();
-  for (const key of displayOnly) {
-    const filename = key.split("/").pop() ?? "";
-    const base = filename.replace(/_display\.jpg$/i, "");
-    if (!byBasename.has(base)) byBasename.set(base, key);
-  }
-  const galleryDisplayKeys = Array.from(byBasename.values());
-
-  // Vynech z galerie hero fotku (ta je nahoře jako primaryUrl)
-  const heroBasename = heroFilename
-    ? heroFilename.replace(/\.[^.]+$/, "")
+  const heroBasename = dayData.heroFilename
+    ? dayData.heroFilename.replace(/\.[^.]+$/, "")
     : null;
 
-  // Galerie na blogu: všechny fotky v display kvalitě (_display.jpg)
-  const galleryWithUrls = await Promise.all(
-    galleryDisplayKeys
-      .filter((displayKey) => {
-        const filename = displayKey.split("/").pop() ?? "";
-        const base = filename.replace(/_display\.jpg$/i, "");
-        return base !== heroBasename;
-      })
-      .map(async (displayKey) => {
-        const displaySigned = await getSignedR2Url(client, displayKey);
-        return {
-          key: displayKey,
-          url: displaySigned,
-          displayUrl: displaySigned,
-        };
-      }),
-  );
-
-  // Mapa trasy a výškový profil (pokud byly vygenerovány)
-  const mapTrailKey = `${basePrefix}outputs/map_trail.png`;
-  const mapElevationKey = `${basePrefix}outputs/map_elevation.png`;
-  const hasMapTrail = await objectExists(client, mapTrailKey);
-  const hasMapElevation = await objectExists(client, mapElevationKey);
-
-  const mapTrailUrl =
-    hasMapTrail ? await getSignedR2Url(client, mapTrailKey) : null;
-  const mapElevationUrl =
-    hasMapElevation ? await getSignedR2Url(client, mapElevationKey) : null;
-
-  const trailStatsKey = `${basePrefix}outputs/trail_stats.json`;
-  let trailStats: TrailStats | null = null;
-  if (await objectExists(client, trailStatsKey)) {
-    const raw = await getTextObject(client, trailStatsKey);
-    if (raw) {
-      try {
-        trailStats = JSON.parse(raw) as TrailStats;
-      } catch {
-        trailStats = null;
-      }
-    }
-  }
-
-  // Stream videa: metadata z video/*_stream.json
-  const videoPrefix = `${basePrefix}video/`;
-  const videoObjects = await listObjects(client, videoPrefix);
-  const streamMetaKeys = videoObjects
-    .map((o) => o.Key ?? "")
-    .filter((k) => k.endsWith("_stream.json"));
-
-  const streamVideos: {
-    streamId: string;
-    filename: string;
-    width: number;
-    height: number;
-    isLandscape: boolean;
-  }[] = [];
-
-  for (const key of streamMetaKeys) {
-    const raw = await getTextObject(client, key);
-    if (!raw) continue;
-    try {
-      const meta = JSON.parse(raw) as { streamId?: string; filename?: string };
-      if (!meta.streamId || !meta.filename) continue;
-
-      let details: StreamVideoDetails | null = null;
-      try {
-        details = await getStreamVideoDetails(meta.streamId);
-      } catch {
-        // keep details null, use fallback
-      }
-
-      const w = details?.width ?? 16;
-      const h = details?.height ?? 9;
-      streamVideos.push({
-        streamId: meta.streamId,
-        filename: meta.filename,
-        width: w,
-        height: h,
-        isLandscape: details?.isLandscape ?? w >= h,
-      });
-    } catch {
-      // ignore invalid JSON
-    }
-  }
+  const galleryPhotos = photoUrls
+    .filter((p) => {
+      const base = p.key.replace(/_display\.jpg$/i, "").replace(/\.[^.]+$/, "");
+      return base !== heroBasename;
+    })
+    .map((p) => ({
+      key: p.key,
+      url: p.displayUrl,
+      displayUrl: p.displayUrl,
+    }));
 
   return {
     tripName,
     date,
-    heroUrl,
-    blogPost,
-    galleryPhotos: galleryWithUrls,
-    mapTrailUrl,
-    mapElevationUrl,
-    trailStats,
-    streamVideos,
+    heroUrl: dayData.coverUrl,
+    blogPost: dayData.blogPost,
+    galleryPhotos,
+    mapTrailUrl: dayData.mapTrailUrl,
+    mapElevationUrl: dayData.mapElevationUrl,
+    trailStats: dayData.trailStats,
+    streamVideos: dayData.streamVideos,
   };
 }
 

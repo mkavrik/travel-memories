@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createR2Client, putObjectBuffer } from "@/lib/r2";
+import { invalidateCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
@@ -115,6 +116,12 @@ export async function POST(request: Request) {
         { error: "Žádný soubor nebyl nahrán.", skipped },
         { status: 400 },
       );
+    }
+
+    try {
+      await invalidateCache(tripName, sectionType === "day" ? date ?? undefined : undefined);
+    } catch (e) {
+      console.warn("[UPLOAD] Cache invalidation failed:", e);
     }
 
     return NextResponse.json(

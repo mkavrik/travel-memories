@@ -11,6 +11,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.744.0",
     "@aws-sdk/s3-request-presigner": "^3.744.0",
+    "@supabase/supabase-js": "^2.99.1",
     "@tmcw/togeojson": "^7.1.2",
     "@xmldom/xmldom": "^0.8.11",
     "heic-convert": "^2.1.0",

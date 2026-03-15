@@ -21,6 +21,7 @@ import {
   type TrailStats,
 } from "@/lib/trailMap";
 import type { FeatureCollection } from "geojson";
+import { invalidateCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
@@ -176,6 +177,12 @@ export async function POST(request: Request) {
         );
 
         send({ phase: "done" });
+
+        try {
+          await invalidateCache(tripName, date);
+        } catch (e) {
+          console.warn("[GENERATE_TRAIL_MAP] Cache invalidation failed:", e);
+        }
 
         const mapTrailUrl = await getSignedR2Url(client, trailKey, 3600);
         const mapElevationUrl = await getSignedR2Url(client, elevationKey, 3600);

@@ -55,11 +55,9 @@ ZPRACOVÁNÍ (tlačítka na /upload stránce)
   │    Claude → prepis_clean.txt                │
   │                                             │
   │  Generovat blog post                        │
-  │    Agent 2a (Kreativec)                     │
-  │       ↓                                     │
-  │    Agent 2b (Korektor) ←── max 3x ──┐      │
-  │       ↓                             │      │
-  │    blog_post.txt → R2 /outputs/     │      │
+  │    Agent 2 (claude-opus-4-6)                │
+  │    Vstup: prepis_clean.txt + poznámky       │
+  │    → blog_post.txt → R2 /outputs/           │
   │                                     │      │
   │  Generovat mapu (pokud GPX)         │      │
   │    GPX → Mapy.cz Static API         │      │
@@ -119,7 +117,7 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 
 ### 5. Vygenerovat blog post
 - Klikni **Generovat blog post**
-- Agent 2a napíše text → Agent 2b zkontroluje (max 3 iterace)
+- Agent (claude-opus-4-6) zpracuje přepis + poznámky a napíše text
 - Výstup: `blog_post.txt` v `/outputs/`
 - Zkontroluj výsledek na blogu `/blog/[trip]/[datum]`
 
@@ -153,7 +151,7 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 
 ### 5. Vygenerovat summary blog post
 - Klikni **Generovat summary**
-- Agent zpracuje poznámky + audio + blog posty jednotlivých dní
+- Agent zpracuje POUZE surové poznámky a audio ze summary sekce
 - Výstup: `blog_post.txt` v `summary/outputs/`
 
 ### 6. Vybrat hero fotku tripu
@@ -237,34 +235,26 @@ trips/
 - Výstup: čistý strukturovaný přepis připravený pro dalšího agenta
 
 ### Agent 2 – Blog post
-- Vstup: přepis + metadata dne
-- Nástroj: Claude API
+- Vstup: přepis audia (prepis_clean.txt) + textové poznámky z daného dne
+- Nástroj: Claude API (claude-opus-4-6)
 - Výstup: blog post v osobním stylu autora
-- Šablona výstupu:
-  - Úvod (kde jsem, co byl cíl dne)
-  - 2–3 hlavní momenty dne
-  - Praktické info (km, převýšení, ubytování)
-  - Závěrečná nálada / reflexe
+- Pipeline: jednoduchá – jeden agent, jedno volání API
 
-#### Pipeline blog post agenta (dvouvrstvá):
-```
-Agent 2a – Kreativec
-- Vstup: poznámky z daného dne
-- Úkol: vytvoří plynulý blog post v osobním stylu
-- Může mít drobné faktické chyby nebo chyby diakritiky
-        ↓
-Agent 2b – Korektor
-- Vstup: blog post od Agent 2a + původní poznámky
-- Úkol: porovná blog post s poznámkami, vytvoří seznam konkrétních oprav
-- Kontroluje: faktické chyby, diakritiku, gramatiku
-- Neměří styl ani strukturu – pouze opravuje chyby
-- Pokud má výhrady → pošle Agent 2a konkrétní seznam oprav
-        ↓
-Agent 2a – opraví konkrétní připomínky → pošle zpět Agent 2b
-        ↓
-Max 3 iterace – po 3 kolech Agent 2b vydá finální výstup
-i pokud má drobné zbývající výhrady
-```
+#### Systémový prompt – principy (SKILL.md):
+- **Lepidlo, ne přepisovač** – poslepovat útržky dohromady, minimálně zasahovat
+- **Tón:** vyprávění u piva – neformální, přirozené, humor plyne ze situací
+- **Sarkasmus a ironie** pouze tam kde je naznačena v poznámkách
+- **Konkrétní fakta zachovat** – časy, vzdálenosti, názvy, značky, ceny
+- **Nedomýšlet** – co není v poznámkách, to nepsat
+- **Netlačit na žádný aspekt** – nebudovat motiv přes celý text
+- **Žádná klišé** – "co víc si přát", "vstříc dobrodružství" apod.
+- **Délka odpovídá vstupu** – nenafoukávat
+- **Nadpis:** formát "Den X — [výstižný nadpis]"
+
+#### Systémový prompt pro summary:
+- Stejné principy jako pro blog post dne
+- Vstup: pouze surové poznámky ze summary sekce (NE blog posty dní)
+- Nadpis: formát "[destinace] — [výstižný podtitul]"
 
 ### Agent 3 – Instagram
 - Vstup: přepis + vybrané fotky
@@ -342,7 +332,7 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - 🔜 Zabezpečení admin části (/upload) – přidat HTTP Basic Auth přes Vercel nebo jinou autentizaci
 - 🔜 Instagram agent
 - 🔜 Výkon blogu – caching výsledků R2 volání do Supabase, stránky se načítají pomalu kvůli mnoha API voláním (signed URLs, Stream metadata, hero fotky)
-- 🔜 Textový agent – další ladění systémového promptu a korekčního agenta, aktuální kvalita je OK ale má rezervy
+- ✅ Textový agent – vyladěný systémový prompt podle SKILL.md, model claude-opus-4-6, jednoduchá pipeline (jeden agent bez korektora)
 
 ---
 
