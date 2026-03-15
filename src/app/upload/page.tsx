@@ -156,6 +156,9 @@ export default function UploadPage() {
     displayUrl: string | null;
     loading: boolean;
   } | null>(null);
+  const [isWarmingCache, setIsWarmingCache] = useState(false);
+  const [warmCacheLines, setWarmCacheLines] = useState<string[]>([]);
+  const [warmCacheSummary, setWarmCacheSummary] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -823,6 +826,43 @@ export default function UploadPage() {
       setStreamDayResult({ error: "Nastala neočekávaná chyba." });
     } finally {
       setIsUploadingDayVideos(false);
+    }
+  }
+
+  async function handleWarmCache() {
+    setWarmCacheLines([]);
+    setWarmCacheSummary(null);
+    setIsWarmingCache(true);
+    try {
+      const res = await fetch("/api/warm-cache", { method: "POST" });
+      if (!res.ok || !res.body) {
+        setWarmCacheSummary(
+          res.ok ? "Prázdná odpověď." : "Zahřívání cache selhalo.",
+        );
+        return;
+      }
+      await readNdjsonStream<{ message?: string; error?: string }>(
+        res.body,
+        (data) => {
+          if (data.error) {
+            setWarmCacheSummary(data.error);
+            return;
+          }
+          if (data.message) {
+            if (data.message.startsWith("Cache warming dokončen:")) {
+              const rest = data.message.slice("Cache warming dokončen:".length).trim();
+              setWarmCacheSummary(`Cache zahřáta:${rest ? ` ${rest}` : ""}`);
+            } else {
+              setWarmCacheLines((prev) => [...prev, data.message!]);
+            }
+          }
+        },
+      );
+    } catch (err) {
+      console.error(err);
+      setWarmCacheSummary("Nastala neočekávaná chyba při zahřívání cache.");
+    } finally {
+      setIsWarmingCache(false);
     }
   }
 
@@ -1619,6 +1659,40 @@ export default function UploadPage() {
               )}
             </div>
           )}
+
+          {/* Správa cache */}
+          <div className="space-y-3 border-t border-slate-800 pt-4">
+            <h2 className="text-sm font-medium text-slate-100">
+              Správa cache
+            </h2>
+            <p className="text-xs text-slate-500">
+              Naplní Supabase cache všemi tripy a dny z R2. Blog se pak načte rychleji.
+            </p>
+            <button
+              type="button"
+              onClick={handleWarmCache}
+              disabled={isWarmingCache}
+              className="rounded-lg border border-amber-600/60 bg-slate-900 px-4 py-2.5 text-sm font-medium text-amber-200 shadow-sm transition hover:border-amber-500 hover:text-amber-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
+            >
+              {isWarmingCache ? "Zahřívám cache..." : "Zahřát cache"}
+            </button>
+            {(warmCacheLines.length > 0 || warmCacheSummary) && (
+              <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-xs">
+                {warmCacheLines.length > 0 && (
+                  <div className="mb-2 max-h-48 overflow-y-auto font-mono text-slate-400">
+                    {warmCacheLines.map((line, i) => (
+                      <div key={i}>{line}</div>
+                    ))}
+                  </div>
+                )}
+                {warmCacheSummary && (
+                  <p className="font-medium text-emerald-400">
+                    {warmCacheSummary}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </form>
       </div>
     </main>
