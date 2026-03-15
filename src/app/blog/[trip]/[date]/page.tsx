@@ -1,6 +1,11 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { getCachedDayData, getCachedPhotoUrls } from "@/lib/cache";
+import {
+  getCachedDayData,
+  getCachedPhotoUrls,
+  getCachedTripDays,
+} from "@/lib/cache";
 import { DayGallery } from "@/components/DayGallery";
 import { HeroBackgroundImage } from "@/components/HeroBackgroundImage";
 import { VideoGridWithLightbox } from "@/components/VideoGridWithLightbox";
@@ -29,14 +34,23 @@ async function getDayData(tripParam: string, dateParam: string) {
   const tripName = decodeURIComponent(tripParam);
   const date = decodeURIComponent(dateParam);
 
-  const [dayData, photoUrls] = await Promise.all([
+  const [dayData, photoUrls, daysList] = await Promise.all([
     getCachedDayData(tripName, date),
     getCachedPhotoUrls(tripName, date),
+    getCachedTripDays(tripName),
   ]);
 
   if (!dayData) {
     notFound();
   }
+
+  const dates = daysList.map((d) => d.date);
+  const currentIdx = dates.indexOf(date);
+  const prevDate = currentIdx > 0 ? dates[currentIdx - 1] : null;
+  const nextDate =
+    currentIdx >= 0 && currentIdx < dates.length - 1
+      ? dates[currentIdx + 1]
+      : null;
 
   const heroBasename = dayData.heroFilename
     ? dayData.heroFilename.replace(/\.[^.]+$/, "")
@@ -56,6 +70,8 @@ async function getDayData(tripParam: string, dateParam: string) {
   return {
     tripName,
     date,
+    prevDate,
+    nextDate,
     heroUrl: dayData.coverUrl,
     blogPost: dayData.blogPost,
     galleryPhotos,
@@ -74,6 +90,8 @@ export default async function DayPage({
   const {
     tripName,
     date,
+    prevDate,
+    nextDate,
     heroUrl,
     blogPost,
     galleryPhotos,
@@ -106,33 +124,62 @@ export default async function DayPage({
 
       {/* Obsah */}
       <section className="mx-auto flex max-w-5xl flex-col gap-8 px-6 py-8 md:px-8 md:py-10 lg:py-12">
-        {/* Breadcrumbs */}
-        <nav
-          aria-label="Breadcrumb"
-          className="text-xs font-medium text-slate-400"
-        >
-          <ol className="flex flex-wrap items-center gap-1">
-            <li>
-              <a
-                href="/blog"
-                className="text-slate-300 transition hover:text-sky-400"
-              >
-                Blog
-              </a>
-            </li>
-            <li className="text-slate-600">/</li>
-            <li>
-              <a
-                href={`/blog/${encodeURIComponent(tripName)}`}
-                className="text-slate-300 transition hover:text-sky-400"
-              >
-                {tripName}
-              </a>
-            </li>
-            <li className="text-slate-600">/</li>
-            <li className="text-slate-300">{date}</li>
-          </ol>
-        </nav>
+        {/* Breadcrumbs + navigace mezi dny */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <nav
+            aria-label="Breadcrumb"
+            className="text-xs font-medium text-slate-400"
+          >
+            <ol className="flex flex-wrap items-center gap-1">
+              <li>
+                <a
+                  href="/blog"
+                  className="text-slate-300 transition hover:text-sky-400"
+                >
+                  Blog
+                </a>
+              </li>
+              <li className="text-slate-600">/</li>
+              <li>
+                <a
+                  href={`/blog/${encodeURIComponent(tripName)}`}
+                  className="text-slate-300 transition hover:text-sky-400"
+                >
+                  {tripName}
+                </a>
+              </li>
+              <li className="text-slate-600">/</li>
+              <li className="text-slate-300">{date}</li>
+            </ol>
+          </nav>
+          {(prevDate || nextDate) && (
+            <nav
+              aria-label="Navigace mezi dny"
+              className="flex items-center gap-2 text-sm"
+            >
+              {prevDate && (
+                <Link
+                  href={`/blog/${encodeURIComponent(tripName)}/${encodeURIComponent(prevDate)}`}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700/80 bg-slate-800/50 px-3 py-2 text-slate-300 transition hover:border-slate-600 hover:bg-slate-800 hover:text-sky-300"
+                  title="Předchozí den"
+                >
+                  <span aria-hidden>←</span>
+                  <span className="hidden sm:inline">{prevDate}</span>
+                </Link>
+              )}
+              {nextDate && (
+                <Link
+                  href={`/blog/${encodeURIComponent(tripName)}/${encodeURIComponent(nextDate)}`}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700/80 bg-slate-800/50 px-3 py-2 text-slate-300 transition hover:border-slate-600 hover:bg-slate-800 hover:text-sky-300"
+                  title="Následující den"
+                >
+                  <span className="hidden sm:inline">{nextDate}</span>
+                  <span aria-hidden>→</span>
+                </Link>
+              )}
+            </nav>
+          )}
+        </div>
 
         {/* Blog post */}
         <div className="space-y-4">
