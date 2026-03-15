@@ -6,6 +6,7 @@ export async function callClaude(
   system: string,
   userContent: string,
   maxTokens = 2000,
+  model = "claude-sonnet-4-5",
 ): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not configured.");
@@ -18,7 +19,7 @@ export async function callClaude(
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-5",
+      model,
       max_tokens: maxTokens,
       system,
       messages: [{ role: "user", content: userContent }],

@@ -30,44 +30,56 @@ Generický AI výstup není cílem – klíčové je, aby výsledek zněl jako a
 
 ```
 MOBILNÍ SBĚR OBSAHU
-  iPhone (Voice Memos, Fotky, GPS)
+  iPhone (Voice Memos, Fotky, GPS, Kamera)
         ↓
 UPLOAD (webová stránka /upload)
   Výběr tripu + dne/summary → Nahrát do R2
         ↓
 CLOUDFLARE R2 (úložiště souborů)
   trips/[trip]/[datum]/
-    /audio/   /photos/  /notes/  /map/  /video/  /outputs/
+    /audio/   /photos/  /video/  /notes/  /map/  /outputs/
         ↓
 ZPRACOVÁNÍ (tlačítka na /upload stránce)
-  ┌─────────────────────────────────────────┐
-  │  Přepsat audio → Whisper → prepis_raw   │
-  │       ↓                                 │
-  │  Claude čištění → prepis_clean.txt      │
-  │       ↓                                 │
-  │  Blog post agent                        │
-  │    Agent 2a (Kreativec)                 │
-  │       ↓                                 │
-  │    Agent 2b (Korektor) ←── max 3x ──┐  │
-  │       ↓                             │  │
-  │    blog_post.txt → R2 /outputs/     │  │
-  │                                     │  │
-  │  Mapa trasy                         │  │
-  │    GPX → Mapy.cz Static API         │  │
-  │    → map_trail.png + stats          │  │
-  │    → map_elevation.png              │  │
-  │                                     │  │
-  │  Výběr hero fotky                   │  │
-  │    HEIC → konverze → Claude vision  │  │
-  │    → hero_photo.json                │  │
-  └─────────────────────────────────────┘
+  ┌─────────────────────────────────────────────┐
+  │  Konvertovat fotky                          │
+  │    HEIC/JPG → sharp → 3 verze cache        │
+  │    (_thumb, _display, _ai)                  │
+  │                                             │
+  │  Nahrát videa do Stream                     │
+  │    MOV/MP4 → Cloudflare Stream              │
+  │    → automatická komprese + streaming       │
+  │    → _stream.json metadata                  │
+  │                                             │
+  │  Přepsat audio                              │
+  │    Whisper → prepis_raw.txt                 │
+  │    Claude → prepis_clean.txt                │
+  │                                             │
+  │  Generovat blog post                        │
+  │    Agent 2a (Kreativec)                     │
+  │       ↓                                     │
+  │    Agent 2b (Korektor) ←── max 3x ──┐      │
+  │       ↓                             │      │
+  │    blog_post.txt → R2 /outputs/     │      │
+  │                                     │      │
+  │  Generovat mapu (pokud GPX)         │      │
+  │    GPX → Mapy.cz Static API         │      │
+  │    → map_trail.png                  │      │
+  │    → map_elevation.png              │      │
+  │    → trail_stats.json               │      │
+  │                                     │      │
+  │  Vybrat hero fotku                  │      │
+  │    fotky → Claude vision            │      │
+  │    → hero_photo.json                │      │
+  └─────────────────────────────────────────────┘
         ↓
-SUPABASE (metadata, stavy zpracování)
+CLOUDFLARE STREAM (videa)
+  Automatická komprese MOV → streamovatelné video
+  Iframe embed na blogu
         ↓
 BLOG (/blog stránky)
-  /blog                    ← seznam tripů + mapa světa
-  /blog/[trip]             ← summary tripu + dny + fotky
-  /blog/[trip]/[datum]     ← blog post + fotky + mapa + statistiky
+  /blog                    ← seznam tripů + mapa světa s knihovničkami
+  /blog/[trip]             ← summary + fotky + rozcestník dní
+  /blog/[trip]/[datum]     ← blog post + fotky + videa + mapa + statistiky
         ↓
 PUBLIKACE (budoucí fáze)
   Instagram agent → příspěvek
@@ -86,31 +98,37 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 - Klikni **Vybrat soubory** a přidej:
   - Audio nahrávky (.m4a, .mp3)
   - Fotky (.heic, .jpg)
+  - Videa (.mov, .mp4)
   - Textové poznámky (.md, .txt)
   - GPX soubor trasy (.gpx) pokud máš
 - Klikni **Nahrát do R2**
 
 ### 2. Konvertovat fotky
 - Klikni **Konvertovat fotky**
-- Počkej na dokončení (vytvoří se thumb, display, ai verze)
+- Počkej na dokončení (vytvoří se thumb, display, ai verze v `/photos/cache/`)
 
-### 3. Přepsat audio
+### 3. Nahrát videa do Cloudflare Stream
+- Klikni **Nahrát videa do Stream**
+- Videa se automaticky zkomprimují a připraví pro streaming
+- Výstup: `[název]_stream.json` metadata v `/video/`
+
+### 4. Přepsat audio
 - Klikni **Přepsat audio**
 - Whisper přepíše nahrávky → Claude vyčistí přepis
 - Výstup: `prepis_clean.txt` v `/outputs/`
 
-### 4. Vygenerovat blog post
+### 5. Vygenerovat blog post
 - Klikni **Generovat blog post**
 - Agent 2a napíše text → Agent 2b zkontroluje (max 3 iterace)
 - Výstup: `blog_post.txt` v `/outputs/`
 - Zkontroluj výsledek na blogu `/blog/[trip]/[datum]`
 
-### 5. Vygenerovat mapu (pokud máš GPX)
+### 6. Vygenerovat mapu (pokud máš GPX)
 - Vyber typ mapové vrstvy (turistická / zimní / letecká)
 - Klikni **Generovat mapu**
 - Výstup: `map_trail.png`, `map_elevation.png`, `trail_stats.json`
 
-### 6. Vybrat hero fotku
+### 7. Vybrat hero fotku
 - Klikni **Vybrat hero fotku dne**
 - Agent vybere nejlepší fotku automaticky
 - Pokud nesouhlasíš → klikni na jinou v manuálním výběru
@@ -122,20 +140,23 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 
 ### 1. Nahrát soubory summary
 - Typ sekce: **Summary (celý trip)**
-- Nahraj poznámky, audio, nejlepší fotky z celého tripu
+- Nahraj poznámky, audio, nejlepší fotky a videa z celého tripu
 
 ### 2. Konvertovat fotky summary
 - Klikni **Konvertovat fotky** v sekci Summary
 
-### 3. Přepsat audio summary
+### 3. Nahrát videa summary do Stream
+- Klikni **Nahrát videa do Stream** v sekci Summary
+
+### 4. Přepsat audio summary
 - Klikni **Přepsat audio**
 
-### 4. Vygenerovat summary blog post
+### 5. Vygenerovat summary blog post
 - Klikni **Generovat summary**
 - Agent zpracuje poznámky + audio + blog posty jednotlivých dní
 - Výstup: `blog_post.txt` v `summary/outputs/`
 
-### 5. Vybrat hero fotku tripu
+### 6. Vybrat hero fotku tripu
 - Klikni **Vybrat hero fotku tripu**
 - Agent vybírá ze VŠECH fotek tripu (všechny dny + summary)
 - Hero fotka se zobrazí jako ikonka tripu na hlavní stránce blogu
@@ -151,10 +172,13 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 | Frontend + Backend | Next.js | vše na jednom místě |
 | Hosting | Vercel | nasazení jedním příkazem |
 | Úložiště souborů | Cloudflare R2 | levné, pro osobní objem prakticky zadarmo |
+| Videa | Cloudflare Stream | automatická komprese + streaming, $5/měsíc |
 | Databáze | Supabase | metadata, stavy zpracování, výstupy |
 | Přepis audia | OpenAI Whisper | nejlepší kvalita přepisu |
 | Agenti (text) | Claude API | blog post, Instagram popisky |
-| Agenti (fotky) | Claude API | výběr fotek, analýza obsahu, popisky |
+| Agenti (fotky) | Claude API | výběr hero fotky, analýza obsahu |
+| Konverze fotek | sharp + heic-convert | HEIC → JPEG, 3 verze cache |
+| Mapy | Mapy.cz Static API | turistická/zimní/letecká mapa s GPX trasou |
 | Vývoj | Cursor | AI asistent při psaní kódu |
 
 ---
@@ -317,6 +341,8 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - 🔜 Odhadovaná doba trvání trasy – Mapy.cz Route API nepodporuje ski routeType, rozdíl oproti webu ~50 min. Vrátit se později a prozkoumat přesnější řešení.
 - 🔜 Zabezpečení admin části (/upload) – přidat HTTP Basic Auth přes Vercel nebo jinou autentizaci
 - 🔜 Instagram agent
+- 🔜 Výkon blogu – caching výsledků R2 volání do Supabase, stránky se načítají pomalu kvůli mnoha API voláním (signed URLs, Stream metadata, hero fotky)
+- 🔜 Textový agent – další ladění systémového promptu a korekčního agenta, aktuální kvalita je OK ale má rezervy
 
 ---
 
