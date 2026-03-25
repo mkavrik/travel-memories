@@ -79,15 +79,72 @@ CLOUDFLARE STREAM (videa)
   Automatická komprese MOV → streamovatelné video
   Iframe embed na blogu
         ↓
-BLOG (/blog stránky)
-  /blog                    ← seznam tripů + mapa světa s knihovničkami
-  /blog/[trip]             ← summary + fotky + rozcestník dní
-  /blog/[trip]/[datum]     ← blog post + fotky + videa + mapa + statistiky
-                              + navigační šipky ← předchozí / následující →
+BLOG (sidebar navigace + obsah)
+  /blog                    ← sidebar s tripy + 3D globus (react-globe.gl)
+  /blog/[trip]             ← hero fotka + sidebar se dny + summary + fotky
+  /blog/[trip]/[datum]     ← hero fotka + sidebar se sekcemi + blog post
+                              + fotky + videa + mapa + statistiky
+                              + navigace ← předchozí / následující →
         ↓
 PUBLIKACE (budoucí fáze)
   Instagram agent → příspěvek
 ```
+
+---
+
+## Design systém blogu
+
+### Layout
+Všechny stránky blogu sdílí jednotnou strukturu:
+- **Tmavé pozadí** `#050509` — vesmírně temné, konzistentní napříč stránkami
+- **Levý sidebar** — tmavý panel (`#0e0e14`) s navigací, karty (`#161620`) se subtilními bordery
+- **Hlavní obsah** — scrollovatelný, oddělený od sidebaru 1px border
+
+### Hierarchie stránek a sidebar
+
+| Stránka | Sidebar obsahuje | Hlavní obsah |
+|---|---|---|
+| `/blog` | "Xar's travel" + seznam tripů (foto + název + datum) | 3D globus (react-globe.gl) |
+| `/blog/[trip]` | "Xar's travel" → název tripu + seznam dní (foto + datum) | Hero fotka nahoře, summary text + fotky |
+| `/blog/[trip]/[date]` | "Xar's travel" → trip → datum + sekční odkazy + prev/next navigace | Hero fotka nahoře, blog post + fotky + videa + mapa + statistiky |
+
+### 3D globus
+- Knihovna: `react-globe.gl`
+- Textura: NASA night-lights (`earth-night.jpg`) + topografie
+- Atmosféra: oranžový glow (`#E8652E`)
+- Piny: barevné tečky (oranžová/teal) s labely, kliknutelné
+- Oblouky: plné čáry mezi tripy
+- Hvězdné pozadí: CSS radial-gradient simulace
+- Výchozí pohled: zaostřeno na Evropu (lat: 50, lng: 15, altitude: 1.6)
+
+### Barevná paleta
+
+```css
+:root {
+  --bg-paper: #0e0e14;           /* sidebar pozadí */
+  --ink: #e8e4df;                /* hlavní text (teplá krémová) */
+  --ink-light: #a09a93;          /* sekundární text */
+  --stroke: rgba(255,255,255,0.1); /* bordery — subtilní */
+  --accent-orange: #E8652E;      /* hlavní akcent — piny, linky, hover */
+  --accent-teal: #1A8C7E;        /* sekundární akcent */
+  --card-bg: #161620;            /* sidebar karty */
+  --text-muted: #7a7570;         /* tlumený text */
+  --shadow-ink: rgba(0,0,0,0.25); /* stíny */
+  --content-card-bg: rgba(255,255,255,0.04);    /* content karty */
+  --content-card-border: rgba(255,255,255,0.08); /* content bordery */
+}
+```
+
+### Fonty
+- **Dela Gothic One** (`font-dela`) — nadpisy, názvy, labely
+- **Nunito** (`font-nunito`) — body text, popisy, breadcrumbs
+
+### Designové principy
+- Sidebar karty: `border border-[var(--stroke)]`, `shadow-[0_2px_8px]`, hover lift + oranžový border glow
+- Content karty: téměř průhledné (`rgba(255,255,255,0.04)`)
+- Hero fotky: gradient `from-black/30 via-transparent to-[#050509]` — lehký overlay, fotka vynikne
+- Accent linka pod nadpisy: oranžová, 2px × 50px
+- Žádný text overlay na hero fotkách — navigace je v sidebaru
 
 ---
 
@@ -136,7 +193,7 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 - Klikni **Vybrat hero fotku dne**
 - Agent vybere nejlepší fotku automaticky
 - Pokud nesouhlasíš → klikni na jinou v manuálním výběru
-- Hero fotka se zobrazí jako ikonka dne na stránce tripu
+- Hero fotka se zobrazí jako cover dne v sidebaru + hero banner na stránce dne
 
 ---
 
@@ -163,9 +220,7 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 ### 6. Vybrat hero fotku tripu
 - Klikni **Vybrat hero fotku tripu**
 - Agent vybírá ze VŠECH fotek tripu (všechny dny + summary)
-- Hero fotka se zobrazí jako ikonka tripu na hlavní stránce blogu
-
----
+- Hero fotka se zobrazí jako cover tripu v sidebaru + hero banner na stránce tripu
 
 ---
 
@@ -173,17 +228,19 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 
 | Část | Technologie | Poznámka |
 |---|---|---|
-| Frontend + Backend | Next.js | vše na jednom místě |
+| Frontend + Backend | Next.js 14 | App Router, server components |
 | Hosting | Vercel | nasazení jedním příkazem |
 | Úložiště souborů | Cloudflare R2 | levné, pro osobní objem prakticky zadarmo |
 | Videa | Cloudflare Stream | automatická komprese + streaming, $5/měsíc |
-| Databáze | Supabase | metadata, stavy zpracování, výstupy |
+| Databáze | Supabase | cache vrstva, metadata |
+| 3D globus | react-globe.gl | Three.js wrapper, NASA textury |
 | Přepis audia | OpenAI Whisper | nejlepší kvalita přepisu |
-| Agenti (text) | Claude API | blog post, Instagram popisky |
+| Agenti (text) | Claude API (claude-opus-4-6) | blog post, Instagram popisky |
 | Agenti (fotky) | Claude API | výběr hero fotky, analýza obsahu |
 | Konverze fotek | sharp + heic-convert | HEIC → JPEG, 3 verze cache |
 | Mapy | Mapy.cz Static API | turistická/zimní/letecká mapa s GPX trasou |
-| Vývoj | Cursor | AI asistent při psaní kódu |
+| CSS | Tailwind CSS | utility-first, CSS custom properties |
+| Fonty | Dela Gothic One + Nunito | Google Fonts via next/font |
 
 ---
 
@@ -195,7 +252,7 @@ trips/
     /2026-02-03/                ← konkrétní den (YYYY-MM-DD)
       /audio/                   ← nahrávky z diktafonu (.m4a, .mp3)
       /photos/                  ← fotky (.jpg, .heic)
-      /video/                   ← videa (.mov, .mp4) – úložiště, střih řešíme později
+      /video/                   ← videa (.mov, .mp4)
       /notes/                   ← textové poznámky (.txt, .md)
       /map/                     ← soubor s trasou dne (.gpx)
       /outputs/                 ← výstupy agentů (blog post, Instagram)
@@ -222,13 +279,19 @@ trips/
 
 ---
 
-## Mobilní upload
+## Klíčové soubory projektu
 
-- Jednoduchá webová stránka (otevřená v mobilním prohlížeči)
-- Výběr cesty, datum do kdy se má kontent zpracovat
-- Výběr souborů (fotky, audio, poznámky)
-- Podpora přerušeného uploadu (offline fronta pro refugia bez signálu)
-- Upload po 2–3 dnech je standardní scénář (GR11 = omezený signál)
+| Soubor | Účel |
+|---|---|
+| `src/app/blog/page.tsx` | Hlavní stránka blogu — sidebar s tripy + 3D globus |
+| `src/app/blog/[trip]/page.tsx` | Stránka tripu — hero + sidebar se dny + summary |
+| `src/app/blog/[trip]/[date]/page.tsx` | Stránka dne — hero + sidebar se sekcemi + obsah |
+| `src/components/TripGlobe.tsx` | 3D globus komponent (react-globe.gl) |
+| `src/lib/tripCoords.ts` | Mapování názvů tripů na GPS souřadnice |
+| `src/app/globals.css` | CSS proměnné, globe styly, sidebar scrollbar |
+| `src/app/upload/page.tsx` | Admin stránka pro upload a zpracování obsahu |
+| `src/lib/cache.ts` | Supabase cache vrstva |
+| `src/lib/r2.ts` | Cloudflare R2 client |
 
 ---
 
@@ -282,16 +345,6 @@ trips/
 
 ---
 
-## Systémové prompty – principy
-
-- Základ všeho jsou dobře odladěné systémové prompty pro každého agenta
-- Agenti se sami neučí – styl se buduje iterací promptů po každé cestě
-- Metoda: style guide (popis stylu) + few-shot příklady (ukázky dobrých výstupů)
-- Agent nikdy nic nevymýšlí – pokud neví, nechá prázdné místo
-- Iterace promptů probíhá na laptopu po cestě, ne v terénu přes mobil
-
----
-
 ## Důležitá rozhodnutí
 
 - ✅ Upload přes webovou stránku (ne nativní mobilní appka)
@@ -300,6 +353,8 @@ trips/
 - ✅ Osobní použití jako první fáze, ostatní cestovatelé až later
 - ✅ Zásadní editace a ladění promptů pouze na laptopu
 - ✅ V terénu akceptovat 80% výsledek, finální úpravy po cestě
+- ✅ Tmavý design blogu s 3D globem — sidebar navigace místo hero bannerů
+- ✅ Profilová hero fotka na úvodní stránce blogu odstraněna — globus je hlavní vizuální prvek
 
 ---
 
@@ -316,41 +371,21 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 
 ---
 
-## Postup vývoje (doporučené pořadí)
+## TODO
 
-1. Založit účty u všech služeb (Vercel, Supabase, Cloudflare R2, OpenAI, Anthropic, GitHub)
-2. Vytvořit `.env.local` s credentials
-3. Rozchodit upload souborů do R2 + adresářová struktura
-4. Přepis audia přes Whisper
-5. První agent – blog post
-6. UI pro zobrazení a schválení výstupu
-7. Testování na datech z Norska
-8. Nasazení před cestou do USA
-9. Vše ostatní iterativně po jednotlivých cestách
-
----
-
-## Budoucí fáze
-
-- 🔜 Automatické střihání videa (krátké reels pro Instagram + delší video pro YouTube/blog)
-- 🔜 Rozšíření pro ostatní cestovatele
-- 🔜 Odhadovaná doba trvání trasy – Mapy.cz Route API nepodporuje ski routeType, rozdíl oproti webu ~50 min. Vrátit se později a prozkoumat přesnější řešení.
-- 🔜 Zabezpečení admin části (/upload) – přidat HTTP Basic Auth přes Vercel nebo jinou autentizaci
-- 🔜 Vizuální úpravy /upload stránky – přehlednější rozložení tlačítek a sekcí pro lepší UX
-- 🔜 Výkon blogu – caching výsledků R2 volání do Supabase, stránky se načítají pomalu kvůli mnoha API voláním (signed URLs, Stream metadata, hero fotky)
-- ✅ Textový agent – vyladěný systémový prompt podle SKILL.md, model claude-opus-4-6, jednoduchá pipeline (jeden agent bez korektora)
-
----
-
-- [ ] GitHub
-- [ ] Vercel (napojit na GitHub)
-- [ ] Supabase
-- [ ] Cloudflare R2
-- [ ] OpenAI (Whisper + případně GPT-4o)
-- [ ] Anthropic (Claude API)
-- [ ] Cursor (editor)
+- [ ] **Mobilní zobrazení blogu** — sidebar layout je optimalizovaný pro desktop, na mobilu se stacked layout (sidebar nahoře, obsah dole) potřebuje doladit: horizontální scroll karet, výška sidebaru, dotykové interakce na globu, hero fotka výška na menších obrazovkách
+- [ ] Zabezpečení admin části (/upload) – přidat autentizaci
+- [ ] Vizuální úpravy /upload stránky – přehlednější rozložení pro lepší UX
+- [ ] Automatické střihání videa (reels pro Instagram + delší video pro YouTube/blog)
+- [ ] Instagram agent – generování popisků a výběr fotek
+- [ ] Rozšíření pro ostatní cestovatele
+- [ ] Odhadovaná doba trvání trasy – Mapy.cz Route API nepodporuje ski routeType
+- [ ] Smazat nepoužívané API `/api/profile-hero` (upload profilové fotky)
+- [x] Textový agent – vyladěný systémový prompt podle SKILL.md, model claude-opus-4-6
+- [x] Redesign blogu – 3D globus, tmavá paleta, sidebar navigace
+- [x] Supabase caching – zrychlení blogu
 
 ---
 
 *Dokument vytvořen na základě úvodní architektury diskutované s Claude (březen 2026).*
-*Aktualizuj tento soubor po každé iteraci nebo důležitém rozhodnutí.*
+*Poslední aktualizace: 25. března 2026 — redesign blogu.*
