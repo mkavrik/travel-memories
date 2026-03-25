@@ -58,17 +58,22 @@ ZPRACOVÁNÍ (tlačítka na /upload stránce)
   │    Agent 2 (claude-opus-4-6)                │
   │    Vstup: prepis_clean.txt + poznámky       │
   │    → blog_post.txt → R2 /outputs/           │
-  │                                     │      │
-  │  Generovat mapu (pokud GPX)         │      │
-  │    GPX → Mapy.cz Static API         │      │
-  │    → map_trail.png                  │      │
-  │    → map_elevation.png              │      │
-  │    → trail_stats.json               │      │
-  │                                     │      │
-  │  Vybrat hero fotku                  │      │
-  │    fotky → Claude vision            │      │
-  │    → hero_photo.json                │      │
+  │                                             │
+  │  Generovat mapu (pokud GPX)                 │
+  │    GPX → Mapy.cz Static API                 │
+  │    → map_trail.png                          │
+  │    → map_elevation.png                      │
+  │    → trail_stats.json                       │
+  │                                             │
+  │  Vybrat hero fotku                          │
+  │    fotky → Claude vision                    │
+  │    → hero_photo.json                        │
   └─────────────────────────────────────────────┘
+        ↓
+SUPABASE (caching)
+  Trips, dny, fotky, blog posty cachované po dobu 7 dní
+  Automatická invalidace při uploadu/generování obsahu
+  Cache warming přes tlačítko "Zahřát cache" na /upload
         ↓
 CLOUDFLARE STREAM (videa)
   Automatická komprese MOV → streamovatelné video
@@ -78,6 +83,7 @@ BLOG (/blog stránky)
   /blog                    ← seznam tripů + mapa světa s knihovničkami
   /blog/[trip]             ← summary + fotky + rozcestník dní
   /blog/[trip]/[datum]     ← blog post + fotky + videa + mapa + statistiky
+                              + navigační šipky ← předchozí / následující →
         ↓
 PUBLIKACE (budoucí fáze)
   Instagram agent → příspěvek
@@ -330,7 +336,7 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - 🔜 Rozšíření pro ostatní cestovatele
 - 🔜 Odhadovaná doba trvání trasy – Mapy.cz Route API nepodporuje ski routeType, rozdíl oproti webu ~50 min. Vrátit se později a prozkoumat přesnější řešení.
 - 🔜 Zabezpečení admin části (/upload) – přidat HTTP Basic Auth přes Vercel nebo jinou autentizaci
-- 🔜 Instagram agent
+- 🔜 Vizuální úpravy /upload stránky – přehlednější rozložení tlačítek a sekcí pro lepší UX
 - 🔜 Výkon blogu – caching výsledků R2 volání do Supabase, stránky se načítají pomalu kvůli mnoha API voláním (signed URLs, Stream metadata, hero fotky)
 - ✅ Textový agent – vyladěný systémový prompt podle SKILL.md, model claude-opus-4-6, jednoduchá pipeline (jeden agent bez korektora)
 

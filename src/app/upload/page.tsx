@@ -103,8 +103,6 @@ export default function UploadPage() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcribeResult, setTranscribeResult] =
     useState<TranscribeResult | null>(null);
-  const [heroFile, setHeroFile] = useState<File | null>(null);
-  const [isUploadingHero, setIsUploadingHero] = useState(false);
   const [heroMessage, setHeroMessage] = useState<string | null>(null);
   const [isGeneratingBlogPost, setIsGeneratingBlogPost] = useState(false);
   const [blogPostStatus, setBlogPostStatus] = useState<
@@ -502,41 +500,6 @@ export default function UploadPage() {
     } finally {
       setIsGeneratingSummary(false);
       setSummaryPhase(null);
-    }
-  }
-
-  async function handleHeroUpload() {
-    setHeroMessage(null);
-
-    if (!heroFile) {
-      setHeroMessage("Vyber fotku pro hero sekci.");
-      return;
-    }
-
-    setIsUploadingHero(true);
-    try {
-      const formData = new FormData();
-      formData.append("hero", heroFile);
-
-      const response = await fetch("/api/profile-hero", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = (await response.json()) as { message?: string; error?: string };
-
-      if (!response.ok) {
-        setHeroMessage(data.error || "Upload profilové fotky selhal.");
-        return;
-      }
-
-      setHeroMessage(data.message || "Profilová fotka byla nahrána.");
-      setHeroFile(null);
-    } catch (error) {
-      console.error(error);
-      setHeroMessage("Nastala neočekávaná chyba při uploadu profilové fotky.");
-    } finally {
-      setIsUploadingHero(false);
     }
   }
 
@@ -1594,39 +1557,6 @@ export default function UploadPage() {
               )}
             </div>
           )}
-
-          {/* Profilová hero fotka */}
-          <div className="mt-6 space-y-2 border-t border-slate-800 pt-4 text-sm">
-            <h2 className="text-sm font-medium text-slate-100">
-              Profilová hero fotka pro blog
-            </h2>
-            <p className="text-xs text-slate-500">
-              Jedna statická fotka, která se zobrazí jako velké pozadí na
-              stránce <span className="font-mono">/blog</span>.
-            </p>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(e) => {
-                  const file = e.target.files?.[0] || null;
-                  setHeroFile(file);
-                }}
-                className="w-full cursor-pointer rounded-lg border border-dashed border-slate-700 bg-slate-900 px-3 py-2 text-xs file:mr-3 file:rounded-md file:border-0 file:bg-sky-600 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:border-slate-500 sm:flex-1"
-              />
-              <button
-                type="button"
-                onClick={handleHeroUpload}
-                disabled={isUploadingHero}
-                className="mt-1 rounded-lg border border-sky-600/60 bg-slate-900 px-3 py-2 text-xs font-medium text-sky-200 shadow-sm transition hover:border-sky-500 hover:text-sky-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500 sm:mt-0"
-              >
-                {isUploadingHero ? "Nahrávám hero fotku..." : "Nahrát hero fotku"}
-              </button>
-            </div>
-            {heroMessage && (
-              <p className="text-xs text-slate-400">{heroMessage}</p>
-            )}
-          </div>
 
           {transcribeResult && (
             <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm">

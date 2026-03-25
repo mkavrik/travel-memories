@@ -1,3 +1,113 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  /* Sidebar & nav panel — dark, blends with content */
+  --bg-paper: #0e0e14;
+  --bg-dark: #2B2D30;
+  --ink: #e8e4df;
+  --ink-light: #a09a93;
+  --stroke: rgba(255, 255, 255, 0.1);
+  --accent-orange: #E8652E;
+  --accent-teal: #1A8C7E;
+  --accent-yellow: #F2C744;
+  --accent-coral: #E85D5D;
+  --card-bg: #161620;
+  --text-muted: #7a7570;
+  --shadow-ink: rgba(0, 0, 0, 0.25);
+
+  /* Content area */
+  --content-card-bg: rgba(255, 255, 255, 0.04);
+  --content-card-border: rgba(255, 255, 255, 0.08);
+}
+
+/* Globe starry background */
+.globe-stars-bg {
+  background: radial-gradient(ellipse at center, #0a0a12 0%, #050509 70%);
+  position: relative;
+}
+.globe-stars-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(1px 1px at 10% 20%, rgba(255,255,255,0.6), transparent),
+    radial-gradient(1px 1px at 25% 55%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1px 1px at 40% 10%, rgba(255,255,255,0.5), transparent),
+    radial-gradient(1px 1px at 55% 75%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1px 1px at 70% 35%, rgba(255,255,255,0.5), transparent),
+    radial-gradient(1px 1px at 85% 60%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1px 1px at 15% 80%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1px 1px at 90% 15%, rgba(255,255,255,0.5), transparent),
+    radial-gradient(1px 1px at 50% 45%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1px 1px at 5% 50%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1px 1px at 35% 90%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1px 1px at 65% 5%, rgba(255,255,255,0.5), transparent),
+    radial-gradient(1px 1px at 80% 85%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1px 1px at 20% 40%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1px 1px at 95% 45%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1px 1px at 45% 65%, rgba(255,255,255,0.5), transparent),
+    radial-gradient(1px 1px at 75% 25%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1px 1px at 30% 70%, rgba(255,255,255,0.3), transparent);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Globe pin styles */
+.globe-pin-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: transform 0.2s ease;
+  pointer-events: auto;
+}
+
+.globe-pin {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 0 12px rgba(232, 101, 46, 0.4);
+}
+
+.globe-pin-spike {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid #E8652E;
+  margin-top: -1px;
+}
+
+.globe-pin-label {
+  font-family: var(--font-dela), 'Dela Gothic One', sans-serif;
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: white;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+/* Sidebar scrollbar */
+.blog-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+.blog-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.blog-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+/* Sidebar card hover glow */
+.trip-card {
+  transition: all 0.15s ease;
+}
+.trip-card:hover {
+  border-color: rgba(232, 101, 46, 0.3);
+}
+

@@ -30,6 +30,14 @@ export async function generateMetadata({
 
 export const revalidate = 3600;
 
+function getTripShortName(name: string): string {
+  return name
+    .replace(/^\d{2}_\d{4}\s*/, "")
+    .split(/\s+/)
+    .slice(0, 3)
+    .join(" ");
+}
+
 async function getDayData(tripParam: string, dateParam: string) {
   const tripName = decodeURIComponent(tripParam);
   const date = decodeURIComponent(dateParam);
@@ -101,198 +109,224 @@ export default async function DayPage({
     streamVideos,
   } = await getDayData(params.trip, params.date);
 
+  // Build sidebar nav items based on available content
+  const sidebarLinks: { label: string; anchor: string }[] = [
+    { label: "Příběh dne", anchor: "pribeh" },
+    { label: "Fotky", anchor: "fotky" },
+  ];
+  if (streamVideos.length > 0) {
+    sidebarLinks.push({ label: "Videa", anchor: "videa" });
+  }
+  sidebarLinks.push({ label: "Trasa dne", anchor: "trasa" });
+  if (trailStats) {
+    sidebarLinks.push({ label: "Statistiky", anchor: "statistiky" });
+  }
+
   return (
-    <main className="min-h-screen bg-[#050509] text-slate-50">
-      {/* Hero – portrait fotky: object-fit contain, object-position center */}
-      <section className="relative h-[60vh] w-full overflow-hidden">
-        <div className="absolute inset-0 z-10 bg-gradient-to-b from-black/60 via-black/40 to-black/90" />
+    <main className="flex h-screen flex-col overflow-hidden bg-[#050509] text-slate-50">
+      {/* Hero – full width on top */}
+      <section className="relative h-[40vh] shrink-0 w-full overflow-hidden">
+        <div className="absolute inset-0 z-10 bg-gradient-to-b from-black/30 via-transparent to-[#050509]" />
         <HeroBackgroundImage
           heroUrl={heroUrl}
           fallbackGradient="radial-gradient(circle at top, #1f2933 0, #020617 60%)"
         />
-        <div className="relative z-20 flex h-full items-end px-6 pb-10 md:px-12 lg:px-20">
-          <div className="max-w-3xl space-y-3">
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-200/80">
-              {tripName}
-            </p>
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
-              {date}
-            </h1>
-          </div>
-        </div>
+        {/* No text overlay — navigation is in sidebar */}
       </section>
 
-      {/* Obsah */}
-      <section className="mx-auto flex max-w-5xl flex-col gap-8 px-6 py-8 md:px-8 md:py-10 lg:py-12">
-        {/* Breadcrumbs + navigace mezi dny */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <nav
-            aria-label="Breadcrumb"
-            className="text-xs font-medium text-slate-400"
-          >
-            <ol className="flex flex-wrap items-center gap-1">
-              <li>
-                <a
-                  href="/blog"
-                  className="text-slate-300 transition hover:text-sky-400"
-                >
-                  Blog
-                </a>
-              </li>
-              <li className="text-slate-600">/</li>
-              <li>
-                <a
-                  href={`/blog/${encodeURIComponent(tripName)}`}
-                  className="text-slate-300 transition hover:text-sky-400"
-                >
-                  {tripName}
-                </a>
-              </li>
-              <li className="text-slate-600">/</li>
-              <li className="text-slate-300">{date}</li>
-            </ol>
-          </nav>
-          {(prevDate || nextDate) && (
-            <nav
-              aria-label="Navigace mezi dny"
-              className="flex items-center gap-2 text-sm"
-            >
-              {prevDate && (
-                <Link
-                  href={`/blog/${encodeURIComponent(tripName)}/${encodeURIComponent(prevDate)}`}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700/80 bg-slate-800/50 px-3 py-2 text-slate-300 transition hover:border-slate-600 hover:bg-slate-800 hover:text-sky-300"
-                  title="Předchozí den"
-                >
-                  <span aria-hidden>←</span>
-                  <span className="hidden sm:inline">{prevDate}</span>
-                </Link>
-              )}
-              {nextDate && (
-                <Link
-                  href={`/blog/${encodeURIComponent(tripName)}/${encodeURIComponent(nextDate)}`}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700/80 bg-slate-800/50 px-3 py-2 text-slate-300 transition hover:border-slate-600 hover:bg-slate-800 hover:text-sky-300"
-                  title="Následující den"
-                >
-                  <span className="hidden sm:inline">{nextDate}</span>
-                  <span aria-hidden>→</span>
-                </Link>
-              )}
-            </nav>
-          )}
-        </div>
-
-        {/* Blog post */}
-        <div className="space-y-4">
-          <h2 className="text-base font-medium text-slate-100">
-            Příběh dne
-          </h2>
-          <div className="rounded-3xl border border-slate-800/70 bg-slate-900/40 p-5 text-sm leading-relaxed text-slate-200 shadow-xl shadow-black/40">
-            {blogPost ? (
-              <MarkdownProse>{blogPost}</MarkdownProse>
-            ) : (
-              <p className="text-slate-400">
-                Pro tento den zatím není připravený blog post.
+      {/* Below hero: sidebar + content */}
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        {/* Sidebar */}
+        <aside className="blog-sidebar shrink-0 overflow-y-auto border-b border-[var(--stroke)] bg-[var(--bg-paper)] md:h-full md:w-[260px] lg:w-[300px] md:border-b-0 md:border-r md:border-[var(--stroke)]">
+          <div className="flex h-full flex-col p-5 md:p-7">
+            {/* Header */}
+            <div className="mb-5">
+              <a href="/blog" className="font-nunito text-xs text-[var(--text-muted)] transition hover:text-[var(--accent-orange)]">
+                Xar&apos;s travel
+              </a>
+              <a
+                href={`/blog/${encodeURIComponent(tripName)}`}
+                className="mt-0.5 block font-nunito text-xs text-[var(--text-muted)] transition hover:text-[var(--accent-orange)]"
+              >
+                {getTripShortName(tripName)}
+              </a>
+              <p className="mt-1 font-dela text-lg text-[var(--ink)]">
+                {date}
               </p>
+              <div className="mt-2 h-[2px] w-[50px] bg-[var(--accent-orange)]" />
+            </div>
+
+            {/* Section links */}
+            <div className="flex gap-3 overflow-x-auto pb-2 md:flex-col md:gap-2 md:overflow-x-visible md:pb-0">
+              {sidebarLinks.map((link) => (
+                <a
+                  key={link.anchor}
+                  href={`#${link.anchor}`}
+                  className="trip-card group flex shrink-0 items-center gap-3 rounded-md border border-[var(--stroke)] bg-[var(--card-bg)] px-3 py-3 shadow-[0_2px_8px_var(--shadow-ink)] transition-all hover:-translate-y-0.5 hover:shadow-[0_4px_16px_var(--shadow-ink)] md:w-full"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="font-dela text-[0.85rem] leading-tight text-[var(--ink)]">
+                      {link.label}
+                    </p>
+                  </div>
+                </a>
+              ))}
+            </div>
+
+            {/* Prev/next day — pinned to bottom */}
+            {(prevDate || nextDate) && (
+              <div className="mt-auto flex flex-col gap-2 pt-5">
+                {prevDate && (
+                  <Link
+                    href={`/blog/${encodeURIComponent(tripName)}/${encodeURIComponent(prevDate)}`}
+                    className="trip-card group flex shrink-0 items-center gap-3 rounded-md border border-[var(--stroke)] bg-[var(--card-bg)] px-3 py-3 shadow-[0_2px_8px_var(--shadow-ink)] transition-all hover:-translate-y-0.5 hover:shadow-[0_4px_16px_var(--shadow-ink)] md:w-full"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-nunito text-[0.65rem] uppercase tracking-widest text-[var(--text-muted)]">
+                        Předchozí den
+                      </p>
+                      <p className="font-dela text-[0.85rem] leading-tight text-[var(--ink)]">
+                        ← {prevDate}
+                      </p>
+                    </div>
+                  </Link>
+                )}
+                {nextDate && (
+                  <Link
+                    href={`/blog/${encodeURIComponent(tripName)}/${encodeURIComponent(nextDate)}`}
+                    className="trip-card group flex shrink-0 items-center gap-3 rounded-md border border-[var(--stroke)] bg-[var(--card-bg)] px-3 py-3 shadow-[0_2px_8px_var(--shadow-ink)] transition-all hover:-translate-y-0.5 hover:shadow-[0_4px_16px_var(--shadow-ink)] md:w-full"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-nunito text-[0.65rem] uppercase tracking-widest text-[var(--text-muted)]">
+                        Následující den
+                      </p>
+                      <p className="font-dela text-[0.85rem] leading-tight text-[var(--ink)]">
+                        {nextDate} →
+                      </p>
+                    </div>
+                  </Link>
+                )}
+              </div>
+            )}
+          </div>
+        </aside>
+
+        {/* Main content — scrollable */}
+        <div className="flex-1 overflow-y-auto scroll-smooth">
+          <div className="mx-auto max-w-4xl space-y-10 px-6 py-8 md:px-10 md:py-12">
+            {/* Blog post */}
+            <section id="pribeh" className="scroll-mt-6 space-y-4">
+              <h2 className="font-dela text-lg text-[var(--ink)]">
+                Příběh dne
+              </h2>
+              <div className="rounded-xl border border-[var(--content-card-border)] bg-[var(--content-card-bg)] p-5 font-nunito text-sm leading-relaxed text-slate-200">
+                {blogPost ? (
+                  <MarkdownProse>{blogPost}</MarkdownProse>
+                ) : (
+                  <p className="text-slate-400">
+                    Pro tento den zatím není připravený blog post.
+                  </p>
+                )}
+              </div>
+            </section>
+
+            {/* Photo gallery */}
+            <section id="fotky" className="scroll-mt-6 space-y-4">
+              <h2 className="font-dela text-lg text-[var(--ink)]">Fotky</h2>
+              <DayGallery
+                primaryUrl={heroUrl}
+                date={date}
+                photos={galleryPhotos.filter((p) => Boolean(p.url))}
+              />
+            </section>
+
+            {/* Videos */}
+            {streamVideos.length > 0 && (
+              <section id="videa" className="scroll-mt-6 space-y-4">
+                <h2 className="font-dela text-lg text-[var(--ink)]">Videa</h2>
+                <VideoGridWithLightbox videos={streamVideos} />
+              </section>
+            )}
+
+            {/* Trail map */}
+            <section id="trasa" className="scroll-mt-6 space-y-4">
+              <h2 className="font-dela text-lg text-[var(--ink)]">Trasa dne</h2>
+              {mapTrailUrl && mapElevationUrl ? (
+                <div className="space-y-4">
+                  <div className="overflow-hidden rounded-xl border border-[var(--content-card-border)] bg-[var(--content-card-bg)]">
+                    <img
+                      src={mapTrailUrl}
+                      alt="Mapa trasy"
+                      className="w-full object-contain"
+                    />
+                  </div>
+                  <div className="overflow-hidden rounded-xl border border-[var(--content-card-border)] bg-[var(--content-card-bg)]">
+                    <img
+                      src={mapElevationUrl}
+                      alt="Výškový profil"
+                      className="w-full object-contain"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center rounded-xl border border-dashed border-[rgba(255,255,255,0.12)] bg-[var(--content-card-bg)] p-6 font-nunito text-sm text-slate-400">
+                  Mapa trasy není k dispozici
+                </div>
+              )}
+            </section>
+
+            {/* Trail stats */}
+            {trailStats && (
+              <section id="statistiky" className="scroll-mt-6 space-y-4">
+                <h2 className="font-dela text-lg text-[var(--ink)]">
+                  Statistiky trasy
+                </h2>
+                <div className="overflow-hidden rounded-xl border border-[var(--content-card-border)] bg-[var(--content-card-bg)]">
+                  <table className="w-full font-nunito text-sm text-slate-200">
+                    <tbody>
+                      <tr className="border-b border-[var(--content-card-border)]">
+                        <td className="py-3 pl-5 pr-3 text-slate-400">📍</td>
+                        <td className="py-3 pr-5">Celková délka</td>
+                        <td className="py-3 pr-5 text-right font-semibold">
+                          {trailStats.distanceKm.toFixed(1)} km
+                        </td>
+                      </tr>
+                      <tr className="border-b border-[var(--content-card-border)]">
+                        <td className="py-3 pl-5 pr-3 text-slate-400">⬆️</td>
+                        <td className="py-3 pr-5">Převýšení nahoru</td>
+                        <td className="py-3 pr-5 text-right font-semibold">
+                          {trailStats.elevationGainM} m
+                        </td>
+                      </tr>
+                      <tr className="border-b border-[var(--content-card-border)]">
+                        <td className="py-3 pl-5 pr-3 text-slate-400">⬇️</td>
+                        <td className="py-3 pr-5">Převýšení dolů</td>
+                        <td className="py-3 pr-5 text-right font-semibold">
+                          {trailStats.elevationLossM} m
+                        </td>
+                      </tr>
+                      <tr className="border-b border-[var(--content-card-border)]">
+                        <td className="py-3 pl-5 pr-3 text-slate-400">🏔️</td>
+                        <td className="py-3 pr-5">Nejvyšší bod</td>
+                        <td className="py-3 pr-5 text-right font-semibold">
+                          {trailStats.maxEleM} m n.m.
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="py-3 pl-5 pr-3 text-slate-400">📉</td>
+                        <td className="py-3 pr-5">Nejnižší bod</td>
+                        <td className="py-3 pr-5 text-right font-semibold">
+                          {trailStats.minEleM} m n.m.
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
             )}
           </div>
         </div>
-
-        {/* Fotogalerie */}
-        <div className="space-y-4">
-          <h2 className="text-base font-medium text-slate-100">Fotky</h2>
-          <DayGallery
-            primaryUrl={heroUrl}
-            date={date}
-            photos={galleryPhotos.filter((p) => Boolean(p.url))}
-          />
-        </div>
-
-        {/* Videa – Cloudflare Stream */}
-        {streamVideos.length > 0 && (
-          <div className="space-y-4">
-            <h2 className="text-base font-medium text-slate-100">Videa</h2>
-            <VideoGridWithLightbox videos={streamVideos} />
-          </div>
-        )}
-
-        {/* Trasa dne – mapa a výškový profil */}
-        <div className="space-y-4">
-          <h2 className="text-base font-medium text-slate-100">Trasa dne</h2>
-          {mapTrailUrl && mapElevationUrl ? (
-            <div className="space-y-4">
-              <div className="overflow-hidden rounded-3xl border border-slate-800/70 bg-slate-900/40 shadow-xl shadow-black/40">
-                <img
-                  src={mapTrailUrl}
-                  alt="Mapa trasy"
-                  className="w-full object-contain"
-                />
-              </div>
-              <div className="overflow-hidden rounded-3xl border border-slate-800/70 bg-slate-900/40 shadow-xl shadow-black/40">
-                <img
-                  src={mapElevationUrl}
-                  alt="Výškový profil"
-                  className="w-full object-contain"
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center rounded-3xl border border-dashed border-slate-800/70 bg-slate-900/30 p-6 text-sm text-slate-400">
-              Mapa trasy není k dispozici
-            </div>
-          )}
-        </div>
-
-        {/* Statistiky trasy (za mapou a výškovým profilem) */}
-        {trailStats && (
-          <div className="space-y-4">
-            <h2 className="text-base font-medium text-slate-100">
-              Statistiky trasy
-            </h2>
-            <div className="overflow-hidden rounded-3xl border border-slate-800/70 bg-slate-900/40 shadow-xl shadow-black/40">
-              <table className="w-full text-sm text-slate-200">
-                <tbody>
-                  <tr className="border-b border-slate-800/70">
-                    <td className="py-3 pl-5 pr-3 text-slate-400">📍</td>
-                    <td className="py-3 pr-5">Celková délka</td>
-                    <td className="py-3 pr-5 text-right font-medium">
-                      {trailStats.distanceKm.toFixed(1)} km
-                    </td>
-                  </tr>
-                  <tr className="border-b border-slate-800/70">
-                    <td className="py-3 pl-5 pr-3 text-slate-400">⬆️</td>
-                    <td className="py-3 pr-5">Převýšení nahoru</td>
-                    <td className="py-3 pr-5 text-right font-medium">
-                      {trailStats.elevationGainM} m
-                    </td>
-                  </tr>
-                  <tr className="border-b border-slate-800/70">
-                    <td className="py-3 pl-5 pr-3 text-slate-400">⬇️</td>
-                    <td className="py-3 pr-5">Převýšení dolů</td>
-                    <td className="py-3 pr-5 text-right font-medium">
-                      {trailStats.elevationLossM} m
-                    </td>
-                  </tr>
-                  <tr className="border-b border-slate-800/70">
-                    <td className="py-3 pl-5 pr-3 text-slate-400">🏔️</td>
-                    <td className="py-3 pr-5">Nejvyšší bod</td>
-                    <td className="py-3 pr-5 text-right font-medium">
-                      {trailStats.maxEleM} m n.m.
-                    </td>
-                  </tr>
-                  <tr>
-                    <td className="py-3 pl-5 pr-3 text-slate-400">📉</td>
-                    <td className="py-3 pr-5">Nejnižší bod</td>
-                    <td className="py-3 pr-5 text-right font-medium">
-                      {trailStats.minEleM} m n.m.
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </section>
+      </div>
     </main>
   );
 }
-

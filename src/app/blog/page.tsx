@@ -1,8 +1,15 @@
 import { Metadata } from "next";
-import { createR2Client, getSignedR2Url } from "@/lib/r2";
+import dynamic from "next/dynamic";
 import { R2_BUCKET_NAME } from "@/lib/r2";
 import { getTripNames, getCachedTripData } from "@/lib/cache";
-import { TripsWorldMap } from "@/components/TripsWorldMap";
+import { getCoordsForTrip } from "@/lib/tripCoords";
+
+const TripGlobe = dynamic(() => import("@/components/TripGlobe"), {
+  ssr: false,
+  loading: () => (
+    <div className="h-full w-full animate-pulse bg-[#050509]" />
+  ),
+});
 
 export const metadata: Metadata = {
   title: "Blog | Travel Memories",
@@ -15,6 +22,14 @@ type TripCard = {
   coverUrl: string | null;
   firstDate: string | null;
 };
+
+function getTripShortName(name: string): string {
+  return name
+    .replace(/^\d{2}_\d{4}\s*/, "")
+    .split(/\s+/)
+    .slice(0, 2)
+    .join(" ");
+}
 
 async function getTripsForBlog(): Promise<TripCard[]> {
   const tripNames = await getTripNames();
@@ -35,121 +50,94 @@ export default async function BlogHomePage() {
   if (!R2_BUCKET_NAME) {
     throw new Error("R2 bucket is not configured.");
   }
-  const client = createR2Client();
-
-  // Profilová hero fotka (ne cachovaná)
-  let heroUrl: string | null = null;
-  try {
-    heroUrl = await getSignedR2Url(client, "profile/hero.jpg");
-  } catch {
-    heroUrl = null;
-  }
 
   const trips = await getTripsForBlog();
 
   return (
-    <main className="min-h-screen bg-[#050509] text-slate-50">
-      {/* Hero */}
-      <section className="relative h-[80vh] w-full overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-black/50 to-black/90 z-10" />
-        <div
-          className="absolute inset-0 bg-cover bg-center"
-          style={{
-            backgroundImage: heroUrl
-              ? `url(${heroUrl})`
-              : "radial-gradient(circle at top, #1f2933 0, #020617 60%)",
-          }}
-        />
-        <div className="relative z-20 flex h-full items-center px-6 md:px-12 lg:px-20">
-          <div className="max-w-xl space-y-4">
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-300/80">
-              Travel Memories
-            </p>
-            <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl lg:text-6xl">
-              Xarův cestovní deník
-            </h1>
-            <p className="text-sm text-slate-200/80 sm:text-base">
-              Fotky, kilometry a příběhy z cest po horách, oceánech a městech,
-              zachycené co nejblíž tomu, jak jsem je doopravdy prožil.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* Obsah */}
-      <section className="w-full">
-        <div className="px-6 py-10 md:px-12 md:py-12 lg:px-20 lg:py-16">
-          <div className="mx-auto flex max-w-6xl flex-col gap-10">
-            {/* Mapa světa */}
-            <div className="rounded-3xl border border-slate-800/80 bg-slate-900/40 p-4 shadow-xl shadow-black/40 backdrop-blur">
-              <div className="mb-4 flex items-baseline justify-between px-1">
-                <h2 className="text-base font-medium text-slate-100">
-                  Místa, kam se ukládají vzpomínky
-                </h2>
-              </div>
-              <div className="h-[500px] w-full md:h-[540px]">
-                <TripsWorldMap trips={trips.map((t) => t.name)} />
-              </div>
+    <main className="h-screen overflow-hidden bg-[#050509] text-slate-50">
+      {/* Mobile: stacked layout, Desktop: sidebar + globe */}
+      <div className="flex h-full flex-col md:flex-row">
+        {/* Sidebar */}
+        <aside className="blog-sidebar shrink-0 overflow-y-auto border-b border-[var(--stroke)] bg-[var(--bg-paper)] md:h-full md:w-[300px] lg:w-[340px] md:border-b-0 md:border-r md:border-[var(--stroke)]">
+          <div className="p-5 md:p-7">
+            {/* Header */}
+            <div className="mb-6">
+              <h1 className="font-dela text-xl text-[var(--ink)] md:text-[1.4rem]">
+                Xar&apos;s travel
+              </h1>
+              <div className="mt-2 h-[2px] w-[50px] bg-[var(--accent-orange)]" />
+              <p className="mt-3 font-nunito text-xs text-[var(--text-muted)]">
+                Cestovní deník kolem světa
+              </p>
             </div>
 
-            {/* Tripy */}
-            <div className="space-y-4">
-              <h2 className="text-base font-medium text-slate-100">
-                Cesty
-              </h2>
-
+            {/* Trip cards */}
+            <div className="flex gap-3 overflow-x-auto pb-2 md:flex-col md:gap-2 md:overflow-x-visible md:pb-0">
               {trips.length === 0 ? (
-                <p className="text-sm text-slate-400">
-                  Zatím tu nejsou žádné tripy. Začni uploadem na stránce{" "}
-                  <a
-                    href="/upload"
-                    className="text-sky-400 underline-offset-2 hover:underline"
-                  >
-                    upload
-                  </a>
-                  .
+                <p className="font-nunito text-sm text-[var(--text-muted)]">
+                  Zatím žádné cesty.
                 </p>
               ) : (
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                  {trips.map((trip) => (
-                    <a
-                      key={trip.name}
-                      href={`/blog/${encodeURIComponent(trip.name)}`}
-                      className="group overflow-hidden rounded-2xl border border-slate-800/70 bg-slate-900/40 shadow-lg shadow-black/40 transition hover:border-sky-500/70 hover:bg-slate-900/80"
-                    >
-                      <div className="relative h-40 w-full overflow-hidden">
-                        {trip.coverUrl ? (
-                          <img
-                            src={trip.coverUrl}
-                            alt={trip.name}
-                            className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03] group-hover:brightness-110"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-800 to-slate-900 text-xs text-slate-400">
-                            Bez fotky
-                          </div>
-                        )}
-                        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                        <div className="absolute bottom-3 left-3 right-3 z-10">
-                          {trip.firstDate && (
-                            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-200/80">
-                              {trip.firstDate}
-                            </p>
-                          )}
-                          <p className="mt-0.5 line-clamp-2 text-sm font-semibold text-slate-50">
-                            {trip.name}
-                          </p>
+                trips.map((trip, i) => (
+                  <a
+                    key={trip.name}
+                    href={`/blog/${encodeURIComponent(trip.name)}`}
+                    className="trip-card group flex shrink-0 items-center gap-3 rounded-md border border-[var(--stroke)] bg-[var(--card-bg)] px-3 py-3 shadow-[0_2px_8px_var(--shadow-ink)] transition-all hover:-translate-y-0.5 hover:shadow-[0_4px_16px_var(--shadow-ink)] md:w-full"
+                    style={{ minWidth: "200px" }}
+                  >
+                    {/* Photo thumbnail */}
+                    <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full border border-[var(--stroke)]">
+                      {trip.coverUrl ? (
+                        <img
+                          src={trip.coverUrl}
+                          alt={getTripShortName(trip.name)}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div
+                          className="flex h-full w-full items-center justify-center text-[10px] text-white"
+                          style={{
+                            backgroundColor:
+                              i % 2 === 0
+                                ? "var(--accent-orange)"
+                                : "var(--accent-teal)",
+                          }}
+                        >
+                          {getTripShortName(trip.name).charAt(0)}
                         </div>
-                      </div>
-                    </a>
-                  ))}
-                </div>
+                      )}
+                    </div>
+
+                    {/* Text */}
+                    <div className="min-w-0 flex-1">
+                      <p className="font-dela text-[0.85rem] leading-tight text-[var(--ink)]">
+                        {getTripShortName(trip.name)}
+                      </p>
+                      {trip.firstDate && (
+                        <p className="mt-0.5 font-nunito text-[0.7rem] text-[var(--text-muted)]">
+                          {trip.firstDate}
+                        </p>
+                      )}
+                    </div>
+                  </a>
+                ))
               )}
             </div>
           </div>
+        </aside>
+
+        {/* Globe */}
+        <div className="relative min-h-[400px] flex-1 bg-[#050509]">
+          <TripGlobe
+            trips={trips.map((t, i) => ({
+              name: t.name,
+              ...getCoordsForTrip(t.name),
+              coverUrl: t.coverUrl,
+              color: (i % 2 === 0 ? "orange" : "teal") as "orange" | "teal",
+            }))}
+          />
         </div>
-      </section>
+      </div>
     </main>
   );
 }
-
