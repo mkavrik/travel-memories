@@ -64,9 +64,9 @@ export default async function TripPage({
     await getTripData(params.trip);
 
   return (
-    <main className="h-screen flex flex-col overflow-hidden bg-[#050509] text-slate-50">
+    <main className="min-h-screen flex flex-col bg-[#050509] text-slate-50 md:h-screen md:overflow-hidden">
       {/* Hero – full width on top */}
-      <section className="relative h-[40vh] shrink-0 w-full overflow-hidden">
+      <section className="relative h-[25vh] shrink-0 w-full overflow-hidden md:h-[40vh]">
         <div className="absolute inset-0 z-10 bg-gradient-to-b from-black/30 via-transparent to-[#050509]" />
         <HeroBackgroundImage
           heroUrl={heroUrl}
@@ -78,7 +78,7 @@ export default async function TripPage({
       {/* Below hero: sidebar + content */}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* Sidebar – days list */}
-        <aside className="blog-sidebar shrink-0 overflow-y-auto border-b border-[var(--stroke)] bg-[var(--bg-paper)] md:h-full md:w-[300px] lg:w-[340px] md:border-b-0 md:border-r md:border-[var(--stroke)]">
+        <aside className="blog-sidebar shrink-0 border-b border-[var(--stroke)] bg-[var(--bg-paper)] md:h-full md:w-[300px] lg:w-[340px] md:overflow-y-auto md:border-b-0 md:border-r md:border-[var(--stroke)]">
           <div className="p-5 md:p-7">
             {/* Header */}
             <div className="mb-5">
@@ -131,7 +131,7 @@ export default async function TripPage({
         </aside>
 
         {/* Main content */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 md:overflow-y-auto">
           <div className="mx-auto max-w-4xl space-y-8 px-6 py-8 md:px-10 md:py-12">
             {/* Breadcrumbs */}
             <nav

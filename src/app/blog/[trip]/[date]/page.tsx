@@ -123,9 +123,9 @@ export default async function DayPage({
   }
 
   return (
-    <main className="flex h-screen flex-col overflow-hidden bg-[#050509] text-slate-50">
+    <main className="flex min-h-screen flex-col bg-[#050509] text-slate-50 md:h-screen md:overflow-hidden">
       {/* Hero – full width on top */}
-      <section className="relative h-[40vh] shrink-0 w-full overflow-hidden">
+      <section className="relative h-[25vh] shrink-0 w-full overflow-hidden md:h-[40vh]">
         <div className="absolute inset-0 z-10 bg-gradient-to-b from-black/30 via-transparent to-[#050509]" />
         <HeroBackgroundImage
           heroUrl={heroUrl}
@@ -137,7 +137,7 @@ export default async function DayPage({
       {/* Below hero: sidebar + content */}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* Sidebar */}
-        <aside className="blog-sidebar shrink-0 overflow-y-auto border-b border-[var(--stroke)] bg-[var(--bg-paper)] md:h-full md:w-[260px] lg:w-[300px] md:border-b-0 md:border-r md:border-[var(--stroke)]">
+        <aside className="blog-sidebar shrink-0 border-b border-[var(--stroke)] bg-[var(--bg-paper)] md:h-full md:w-[260px] lg:w-[300px] md:overflow-y-auto md:border-b-0 md:border-r md:border-[var(--stroke)]">
           <div className="flex h-full flex-col p-5 md:p-7">
             {/* Header */}
             <div className="mb-5">
@@ -175,7 +175,7 @@ export default async function DayPage({
 
             {/* Prev/next day — pinned to bottom */}
             {(prevDate || nextDate) && (
-              <div className="mt-auto flex flex-col gap-2 pt-5">
+              <div className="mt-4 flex flex-col gap-2 md:mt-auto md:pt-5">
                 {prevDate && (
                   <Link
                     href={`/blog/${encodeURIComponent(tripName)}/${encodeURIComponent(prevDate)}`}
@@ -212,7 +212,7 @@ export default async function DayPage({
         </aside>
 
         {/* Main content — scrollable */}
-        <div className="flex-1 overflow-y-auto scroll-smooth">
+        <div className="flex-1 scroll-smooth md:overflow-y-auto">
           <div className="mx-auto max-w-4xl space-y-10 px-6 py-8 md:px-10 md:py-12">
             {/* Blog post */}
             <section id="pribeh" className="scroll-mt-6 space-y-4">

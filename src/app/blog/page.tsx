@@ -54,11 +54,11 @@ export default async function BlogHomePage() {
   const trips = await getTripsForBlog();
 
   return (
-    <main className="h-screen overflow-hidden bg-[#050509] text-slate-50">
+    <main className="min-h-screen bg-[#050509] text-slate-50 md:h-screen md:overflow-hidden">
       {/* Mobile: stacked layout, Desktop: sidebar + globe */}
-      <div className="flex h-full flex-col md:flex-row">
+      <div className="flex flex-col md:h-full md:flex-row">
         {/* Sidebar */}
-        <aside className="blog-sidebar shrink-0 overflow-y-auto border-b border-[var(--stroke)] bg-[var(--bg-paper)] md:h-full md:w-[300px] lg:w-[340px] md:border-b-0 md:border-r md:border-[var(--stroke)]">
+        <aside className="blog-sidebar shrink-0 border-b border-[var(--stroke)] bg-[var(--bg-paper)] md:h-full md:w-[300px] lg:w-[340px] md:overflow-y-auto md:border-b-0 md:border-r md:border-[var(--stroke)]">
           <div className="p-5 md:p-7">
             {/* Header */}
             <div className="mb-6">
@@ -127,7 +127,7 @@ export default async function BlogHomePage() {
         </aside>
 
         {/* Globe */}
-        <div className="relative min-h-[400px] flex-1 bg-[#050509]">
+        <div className="relative h-[70vh] flex-1 bg-[#050509] md:h-auto">
           <TripGlobe
             trips={trips.map((t, i) => ({
               name: t.name,
