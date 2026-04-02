@@ -239,6 +239,7 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 | Agenti (fotky) | Claude API | výběr hero fotky, analýza obsahu |
 | Konverze fotek | sharp + heic-convert | HEIC → JPEG, 3 verze cache |
 | Mapy | Mapy.cz Static API | turistická/zimní/letecká mapa s GPX trasou |
+| EXIF čtení | exifr | řazení fotek v galerii podle data pořízení |
 | CSS | Tailwind CSS | utility-first, CSS custom properties |
 | Fonty | Dela Gothic One + Nunito | Google Fonts via next/font |
 
@@ -290,6 +291,7 @@ trips/
 | `src/lib/tripCoords.ts` | Mapování názvů tripů na GPS souřadnice |
 | `src/app/globals.css` | CSS proměnné, globe styly, sidebar scrollbar |
 | `src/app/upload/page.tsx` | Admin stránka pro upload a zpracování obsahu |
+| `src/components/MapWithZoom.tsx` | Mapa trasy s lightbox zoomem |
 | `src/lib/cache.ts` | Supabase cache vrstva |
 | `src/lib/r2.ts` | Cloudflare R2 client |
 
@@ -384,8 +386,13 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - [x] Textový agent – vyladěný systémový prompt podle SKILL.md, model claude-opus-4-6
 - [x] Redesign blogu – 3D globus, tmavá paleta, sidebar navigace
 - [x] Supabase caching – zrychlení blogu
+- [x] Zoom na globusu (kolečko myši, min/max limity)
+- [x] Galerie fotek – řazení podle EXIF data pořízení (exifr), fallback na název souboru
+- [x] Lightbox fotek – zoom plugin (kolečko myši + pinch)
+- [x] Automatické přehrávání videí – Cloudflare Stream SDK, auto-advance na další video
+- [x] Mapa trasy – zoom přes lightbox s Zoom pluginem
 
 ---
 
 *Dokument vytvořen na základě úvodní architektury diskutované s Claude (březen 2026).*
-*Poslední aktualizace: 25. března 2026 — redesign blogu.*
+*Poslední aktualizace: 2. dubna 2026 — interaktivní vylepšení blogu (zoom, EXIF řazení, autoplay videí).*

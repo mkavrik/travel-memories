@@ -9,6 +9,7 @@ import {
 import { DayGallery } from "@/components/DayGallery";
 import { HeroBackgroundImage } from "@/components/HeroBackgroundImage";
 import { VideoGridWithLightbox } from "@/components/VideoGridWithLightbox";
+import { MapWithZoom } from "@/components/MapWithZoom";
 import { MarkdownProse } from "@/components/MarkdownProse";
 
 type Params = {
@@ -252,22 +253,10 @@ export default async function DayPage({
             <section id="trasa" className="scroll-mt-6 space-y-4">
               <h2 className="font-dela text-lg text-[var(--ink)]">Trasa dne</h2>
               {mapTrailUrl && mapElevationUrl ? (
-                <div className="space-y-4">
-                  <div className="overflow-hidden rounded-xl border border-[var(--content-card-border)] bg-[var(--content-card-bg)]">
-                    <img
-                      src={mapTrailUrl}
-                      alt="Mapa trasy"
-                      className="w-full object-contain"
-                    />
-                  </div>
-                  <div className="overflow-hidden rounded-xl border border-[var(--content-card-border)] bg-[var(--content-card-bg)]">
-                    <img
-                      src={mapElevationUrl}
-                      alt="Výškový profil"
-                      className="w-full object-contain"
-                    />
-                  </div>
-                </div>
+                <MapWithZoom
+                  mapTrailUrl={mapTrailUrl}
+                  mapElevationUrl={mapElevationUrl}
+                />
               ) : (
                 <div className="flex items-center justify-center rounded-xl border border-dashed border-[rgba(255,255,255,0.12)] bg-[var(--content-card-bg)] p-6 font-nunito text-sm text-slate-400">
                   Mapa trasy není k dispozici

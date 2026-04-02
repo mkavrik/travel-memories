@@ -45,7 +45,9 @@ export default function TripGlobe({ trips }: Props) {
       if (controls) {
         controls.autoRotate = true;
         controls.autoRotateSpeed = 0.3;
-        controls.enableZoom = false;
+        controls.enableZoom = true;
+        controls.minDistance = 150;  // max zoom in
+        controls.maxDistance = 600;  // max zoom out
       }
       globe.pointOfView({ lat: 50, lng: 15, altitude: 1.6 }, 0);
     }, 100);
