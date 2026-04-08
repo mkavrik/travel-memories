@@ -68,6 +68,11 @@ ZPRACOVÁNÍ (tlačítka na /upload stránce)
   │  Vybrat hero fotku                          │
   │    fotky → Claude vision                    │
   │    → hero_photo.json                        │
+  │                                             │
+  │  Upravit text                               │
+  │    Načíst blog_post.txt z R2 → textarea     │
+  │    → uložit zpět do R2 + update Supabase    │
+  │    → revalidatePath pro Next.js cache       │
   └─────────────────────────────────────────────┘
         ↓
 SUPABASE (caching)
@@ -232,7 +237,7 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 | Hosting | Vercel | nasazení jedním příkazem |
 | Úložiště souborů | Cloudflare R2 | levné, pro osobní objem prakticky zadarmo |
 | Videa | Cloudflare Stream | automatická komprese + streaming, $5/měsíc |
-| Databáze | Supabase | cache vrstva, metadata |
+| Databáze | Supabase | cache vrstva, metadata; RLS zapnuté, zápis přes service_role |
 | 3D globus | react-globe.gl | Three.js wrapper, NASA textury |
 | Přepis audia | OpenAI Whisper | nejlepší kvalita přepisu |
 | Agenti (text) | Claude API (claude-opus-4-6) | blog post, Instagram popisky |
@@ -294,6 +299,9 @@ trips/
 | `src/components/MapWithZoom.tsx` | Mapa trasy s lightbox zoomem |
 | `src/lib/cache.ts` | Supabase cache vrstva |
 | `src/lib/r2.ts` | Cloudflare R2 client |
+| `src/lib/supabase.ts` | Supabase klienti (anon pro čtení, service_role pro zápis) |
+| `src/app/api/get-blog-post/route.ts` | GET API — načtení blog_post.txt z R2 |
+| `src/app/api/save-blog-post/route.ts` | POST API — uložení textu do R2 + update cache + revalidace |
 
 ---
 
@@ -391,8 +399,10 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - [x] Lightbox fotek – zoom plugin (kolečko myši + pinch)
 - [x] Automatické přehrávání videí – Cloudflare Stream SDK, auto-advance na další video
 - [x] Mapa trasy – zoom přes lightbox s Zoom pluginem
+- [x] Editace blog textu z /upload stránky — načtení/uložení blog_post.txt, update Supabase cache + Next.js revalidace
+- [x] RLS oprava — service_role klient pro zápis do Supabase cache
 
 ---
 
 *Dokument vytvořen na základě úvodní architektury diskutované s Claude (březen 2026).*
-*Poslední aktualizace: 2. dubna 2026 — interaktivní vylepšení blogu (zoom, EXIF řazení, autoplay videí).*
+*Poslední aktualizace: 8. dubna 2026 — editace blog textu z /upload, RLS oprava, cache invalidace.*
