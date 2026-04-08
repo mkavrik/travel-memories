@@ -8,8 +8,15 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 export function createSupabaseClient(): SupabaseClient | null {
   if (!url || !anonKey) return null;
   return createClient(url, anonKey);
+}
+
+/** Client with service_role key — bypasses RLS. Use for server-side writes. */
+export function createSupabaseServiceClient(): SupabaseClient | null {
+  if (!url || !serviceRoleKey) return null;
+  return createClient(url, serviceRoleKey);
 }

@@ -157,6 +157,12 @@ export default function UploadPage() {
   const [isWarmingCache, setIsWarmingCache] = useState(false);
   const [warmCacheLines, setWarmCacheLines] = useState<string[]>([]);
   const [warmCacheSummary, setWarmCacheSummary] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [editTextLoaded, setEditTextLoaded] = useState(false);
+  const [editTextNotFound, setEditTextNotFound] = useState(false);
+  const [isLoadingText, setIsLoadingText] = useState(false);
+  const [isSavingText, setIsSavingText] = useState(false);
+  const [editTextMessage, setEditTextMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -829,6 +835,78 @@ export default function UploadPage() {
     }
   }
 
+  async function handleLoadBlogText() {
+    setEditTextMessage(null);
+    setEditTextNotFound(false);
+    setEditTextLoaded(false);
+    setEditText("");
+
+    const effectiveDate = sectionType === "summary" ? "summary" : date?.trim();
+    if (!tripName?.trim() || !effectiveDate) {
+      setEditTextMessage("Zadej název tripu a datum (nebo vyber summary).");
+      return;
+    }
+
+    setIsLoadingText(true);
+    try {
+      const params = new URLSearchParams({
+        tripName: tripName.trim(),
+        date: effectiveDate,
+      });
+      const res = await fetch(`/api/get-blog-post?${params.toString()}`);
+      const data = (await res.json()) as { content: string | null; error?: string };
+      if (data.error) {
+        setEditTextMessage(data.error);
+        return;
+      }
+      if (data.content == null) {
+        setEditTextNotFound(true);
+        return;
+      }
+      setEditText(data.content);
+      setEditTextLoaded(true);
+    } catch (err) {
+      console.error(err);
+      setEditTextMessage("Nastala neočekávaná chyba při načítání textu.");
+    } finally {
+      setIsLoadingText(false);
+    }
+  }
+
+  async function handleSaveBlogText() {
+    setEditTextMessage(null);
+
+    const effectiveDate = sectionType === "summary" ? "summary" : date?.trim();
+    if (!tripName?.trim() || !effectiveDate) {
+      setEditTextMessage("Zadej název tripu a datum.");
+      return;
+    }
+
+    setIsSavingText(true);
+    try {
+      const res = await fetch("/api/save-blog-post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tripName: tripName.trim(),
+          date: effectiveDate,
+          content: editText,
+        }),
+      });
+      const data = (await res.json()) as { success?: boolean; error?: string };
+      if (data.error) {
+        setEditTextMessage(data.error);
+        return;
+      }
+      setEditTextMessage("Text uložen");
+    } catch (err) {
+      console.error(err);
+      setEditTextMessage("Nastala neočekávaná chyba při ukládání textu.");
+    } finally {
+      setIsSavingText(false);
+    }
+  }
+
   async function handleSyncAllVideosToStream() {
     setStreamSyncResult(null);
     setStreamSyncProgress(null);
@@ -1196,6 +1274,61 @@ export default function UploadPage() {
                   </p>
                 )}
               </div>
+            )}
+          </div>
+
+          {/* Upravit text */}
+          <div className="space-y-3 border-t border-slate-800 pt-4">
+            <p className="text-xs font-medium text-slate-300">
+              Upravit text
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <button
+                type="button"
+                onClick={handleLoadBlogText}
+                disabled={
+                  isLoadingText ||
+                  !tripName?.trim() ||
+                  (sectionType === "day" && !date?.trim())
+                }
+                className="rounded-lg border border-sky-600/60 bg-slate-900 px-4 py-2.5 text-xs font-medium text-sky-200 shadow-sm transition hover:border-sky-500 hover:text-sky-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
+              >
+                {isLoadingText ? "Načítám..." : "Načíst text"}
+              </button>
+              {editTextLoaded && (
+                <button
+                  type="button"
+                  onClick={handleSaveBlogText}
+                  disabled={isSavingText}
+                  className="rounded-lg border border-emerald-600/60 bg-slate-900 px-4 py-2.5 text-xs font-medium text-emerald-200 shadow-sm transition hover:border-emerald-500 hover:text-emerald-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
+                >
+                  {isSavingText ? "Ukládám..." : "Uložit text"}
+                </button>
+              )}
+            </div>
+            {editTextNotFound && (
+              <p className="text-xs text-slate-500">
+                Pro tento den ještě nebyl vygenerován text.
+              </p>
+            )}
+            {editTextLoaded && (
+              <textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                className="w-full min-h-[400px] rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-sm leading-relaxed text-slate-200 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/40 font-sans"
+                spellCheck={false}
+              />
+            )}
+            {editTextMessage && (
+              <p
+                className={`text-xs ${
+                  editTextMessage === "Text uložen"
+                    ? "text-emerald-400"
+                    : "text-red-400"
+                }`}
+              >
+                {editTextMessage}
+              </p>
             )}
           </div>
 

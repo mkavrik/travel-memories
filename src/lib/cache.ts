@@ -137,7 +137,7 @@ export async function getCachedTripData(
         .from("trips_cache")
         .select("cover_url, first_date, summary_text, updated_at")
         .eq("trip_name", tripName)
-        .single();
+        .maybeSingle();
       const ms = Date.now() - t0;
       if (selectError) {
         console.error(`Cache Supabase SELECT error [${key}]:`, selectError);
@@ -355,7 +355,7 @@ export async function getCachedDayData(
         .select("*")
         .eq("trip_name", tripName)
         .eq("date", date)
-        .single();
+        .maybeSingle();
       const ms = Date.now() - t0;
       if (selectError) {
         console.error(`Cache Supabase SELECT error [${key}]:`, selectError);
@@ -645,14 +645,32 @@ export async function invalidateCache(
   date?: string | null,
 ): Promise<void> {
   const supabase = createSupabaseClient();
-  if (!supabase) return;
+  if (!supabase) {
+    console.log(`[invalidateCache] No Supabase client, skipping`);
+    return;
+  }
+  console.log(`[invalidateCache] tripName=${JSON.stringify(tripName)}, date=${JSON.stringify(date ?? null)}`);
+
+  // Dump existing trip_names in days_cache for comparison
+  const { data: sample } = await supabase
+    .from("days_cache")
+    .select("trip_name, date")
+    .limit(10);
+  console.log(`[invalidateCache] days_cache sample:`, JSON.stringify(sample));
+
   if (date) {
-    await supabase.from("days_cache").delete().eq("trip_name", tripName).eq("date", date);
-    await supabase.from("photo_urls_cache").delete().eq("trip_name", tripName).eq("date", date);
-    await supabase.from("trips_cache").delete().eq("trip_name", tripName);
+    const r1 = await supabase.from("days_cache").delete({ count: "exact" }).eq("trip_name", tripName).eq("date", date);
+    console.log(`[invalidateCache] days_cache delete: error=${JSON.stringify(r1.error)}, count=${r1.count}`);
+    const r2 = await supabase.from("photo_urls_cache").delete({ count: "exact" }).eq("trip_name", tripName).eq("date", date);
+    console.log(`[invalidateCache] photo_urls_cache delete: error=${JSON.stringify(r2.error)}, count=${r2.count}`);
+    const r3 = await supabase.from("trips_cache").delete({ count: "exact" }).eq("trip_name", tripName);
+    console.log(`[invalidateCache] trips_cache delete: error=${JSON.stringify(r3.error)}, count=${r3.count}`);
   } else {
-    await supabase.from("days_cache").delete().eq("trip_name", tripName);
-    await supabase.from("photo_urls_cache").delete().eq("trip_name", tripName);
-    await supabase.from("trips_cache").delete().eq("trip_name", tripName);
+    const r1 = await supabase.from("days_cache").delete({ count: "exact" }).eq("trip_name", tripName);
+    console.log(`[invalidateCache] days_cache delete (all): error=${JSON.stringify(r1.error)}, count=${r1.count}`);
+    const r2 = await supabase.from("photo_urls_cache").delete({ count: "exact" }).eq("trip_name", tripName);
+    console.log(`[invalidateCache] photo_urls_cache delete (all): error=${JSON.stringify(r2.error)}, count=${r2.count}`);
+    const r3 = await supabase.from("trips_cache").delete({ count: "exact" }).eq("trip_name", tripName);
+    console.log(`[invalidateCache] trips_cache delete (all): error=${JSON.stringify(r3.error)}, count=${r3.count}`);
   }
 }
