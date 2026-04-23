@@ -1,16 +1,18 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import {
   createR2Client,
-  getObjectBuffer,
+  getSignedR2Url,
   putTextObject,
   listObjects,
   objectExists,
 } from "@/lib/r2";
 import {
-  uploadVideoToStream,
+  uploadVideoToStreamFromUrl,
   streamMetaKey,
   isVideoKey,
 } from "@/lib/cloudflareStream";
+import { invalidateCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
@@ -54,15 +56,10 @@ export async function POST(request: Request) {
         continue;
       }
 
-      const videoKey = `${videoPrefix}${filename}`;
-      const buffer = await getObjectBuffer(client, videoKey);
-      if (!buffer) {
-        skipped.push(filename);
-        continue;
-      }
-
       try {
-        const streamId = await uploadVideoToStream(buffer, filename);
+        const videoKey = `${videoPrefix}${filename}`;
+        const sourceUrl = await getSignedR2Url(client, videoKey, 24 * 3600);
+        const streamId = await uploadVideoToStreamFromUrl(sourceUrl, filename);
         await putTextObject(
           client,
           metaKey,
@@ -70,8 +67,21 @@ export async function POST(request: Request) {
           "application/json",
         );
         uploaded.push({ filename, streamId });
-      } catch {
+      } catch (err) {
+        console.error("[UPLOAD_DAY_VIDEOS_TO_STREAM] Stream copy failed:", {
+          filename,
+          error: err instanceof Error ? err.message : String(err),
+        });
         skipped.push(filename);
+      }
+    }
+
+    if (uploaded.length > 0) {
+      try {
+        await invalidateCache(tripName, date);
+        revalidatePath(`/blog/${tripName}/${date}`);
+      } catch (e) {
+        console.warn("[UPLOAD_DAY_VIDEOS_TO_STREAM] Cache invalidation failed:", e);
       }
     }
 

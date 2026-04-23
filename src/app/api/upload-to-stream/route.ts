@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import {
   createR2Client,
-  getObjectBuffer,
+  getSignedR2Url,
   putTextObject,
   objectExists,
 } from "@/lib/r2";
 import {
-  uploadVideoToStream,
+  uploadVideoToStreamFromUrl,
   streamMetaKey,
 } from "@/lib/cloudflareStream";
+import { invalidateCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
@@ -42,15 +44,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const buffer = await getObjectBuffer(client, videoKey);
-    if (!buffer) {
-      return NextResponse.json(
-        { error: "Nepodařilo se načíst video z R2." },
-        { status: 500 },
-      );
-    }
+    // 24h presigned URL — Stream ingests asynchronously and the URL must stay
+    // valid throughout the download on their side.
+    const sourceUrl = await getSignedR2Url(client, videoKey, 24 * 3600);
+    const streamId = await uploadVideoToStreamFromUrl(sourceUrl, filename);
 
-    const streamId = await uploadVideoToStream(buffer, filename);
     const videoPrefix = `trips/${tripName}/${date}/video/`;
     const metaKey = streamMetaKey(videoPrefix, filename);
     await putTextObject(
@@ -59,6 +57,13 @@ export async function POST(request: Request) {
       JSON.stringify({ streamId, filename }),
       "application/json",
     );
+
+    try {
+      await invalidateCache(tripName, date);
+      revalidatePath(`/blog/${tripName}/${date}`);
+    } catch (e) {
+      console.warn("[UPLOAD_TO_STREAM] Cache invalidation failed:", e);
+    }
 
     return NextResponse.json(
       { streamId, filename, metaKey },

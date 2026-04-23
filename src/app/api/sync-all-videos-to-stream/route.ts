@@ -1,16 +1,18 @@
+import { revalidatePath } from "next/cache";
 import {
   createR2Client,
-  getObjectBuffer,
+  getSignedR2Url,
   putTextObject,
   listObjects,
   listTripPrefixes,
   objectExists,
 } from "@/lib/r2";
 import {
-  uploadVideoToStream,
+  uploadVideoToStreamFromUrl,
   streamMetaKey,
   isVideoKey,
 } from "@/lib/cloudflareStream";
+import { invalidateCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
@@ -77,6 +79,7 @@ export async function POST() {
 
         const total = tasks.length;
         let uploaded = 0;
+        const touchedDays = new Set<string>();
 
         for (let i = 0; i < tasks.length; i++) {
           send({
@@ -86,21 +89,15 @@ export async function POST() {
           });
 
           const task = tasks[i];
-          console.log("[SYNC_ALL_VIDEOS] Nahrávám video:", {
+          console.log("[SYNC_ALL_VIDEOS] Stream copy:", {
             tripName: task.tripName,
             date: task.date,
             filename: task.filename,
-            videoKey: task.videoKey,
           });
 
-          const buffer = await getObjectBuffer(client, task.videoKey);
-          if (!buffer) {
-            console.error("[SYNC_ALL_VIDEOS] Nepodařilo se načíst z R2:", task.videoKey);
-            continue;
-          }
-
           try {
-            const streamId = await uploadVideoToStream(buffer, task.filename);
+            const sourceUrl = await getSignedR2Url(client, task.videoKey, 24 * 3600);
+            const streamId = await uploadVideoToStreamFromUrl(sourceUrl, task.filename);
             await putTextObject(
               client,
               task.metaKey,
@@ -108,12 +105,22 @@ export async function POST() {
               "application/json",
             );
             uploaded++;
+            touchedDays.add(`${task.tripName}::${task.date}`);
             console.log("[SYNC_ALL_VIDEOS] OK:", task.filename, "→", streamId);
           } catch (err) {
-            console.error("[SYNC_ALL_VIDEOS] Upload selhal:", task.filename, {
+            console.error("[SYNC_ALL_VIDEOS] Copy failed:", task.filename, {
               error: err instanceof Error ? err.message : String(err),
-              stack: err instanceof Error ? err.stack : undefined,
             });
+          }
+        }
+
+        for (const key of Array.from(touchedDays)) {
+          const [tripName, date] = key.split("::");
+          try {
+            await invalidateCache(tripName, date);
+            revalidatePath(`/blog/${tripName}/${date}`);
+          } catch (e) {
+            console.warn("[SYNC_ALL_VIDEOS] Cache invalidation failed:", key, e);
           }
         }
 

@@ -42,8 +42,13 @@ export async function getStreamVideoDetails(
   };
 }
 
-export async function uploadVideoToStream(
-  buffer: Buffer,
+/**
+ * Tell Cloudflare Stream to fetch a video from a URL and ingest it. Stream
+ * downloads + encodes asynchronously in the background; we just POST the URL
+ * and get a uid back immediately. Avoids streaming video bytes through Vercel.
+ */
+export async function uploadVideoToStreamFromUrl(
+  sourceUrl: string,
   filename: string,
 ): Promise<string> {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -54,28 +59,29 @@ export async function uploadVideoToStream(
     );
   }
 
-  const formData = new FormData();
-  formData.append(
-    "file",
-    new Blob([new Uint8Array(buffer)], { type: "video/mp4" }),
-    filename,
-  );
-
-  const url = `${STREAM_API}/${accountId}/stream`;
+  const url = `${STREAM_API}/${accountId}/stream/copy`;
   const res = await fetch(url, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: formData,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      url: sourceUrl,
+      meta: { name: filename },
+    }),
   });
 
   if (!res.ok) {
     const errText = await res.text();
-    console.error("[Cloudflare Stream API] Upload failed:", {
+    console.error("[Cloudflare Stream API] Copy failed:", {
       status: res.status,
       statusText: res.statusText,
       body: errText,
     });
-    throw new Error(`Cloudflare Stream API ${res.status}: ${errText.slice(0, 300)}`);
+    throw new Error(
+      `Cloudflare Stream API ${res.status}: ${errText.slice(0, 300)}`,
+    );
   }
 
   const data = (await res.json()) as {
