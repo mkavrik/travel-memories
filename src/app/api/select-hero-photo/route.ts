@@ -71,16 +71,7 @@ async function getTripPhotoCandidates(tripName: string) {
   const client = createR2Client();
   const basePrefix = `trips/${tripName}/`;
 
-  // 1) Fotky ze summary/photos
-  const summaryPhotos = await listObjects(
-    client,
-    `${basePrefix}summary/photos/`,
-  );
-  const summaryImages = summaryPhotos.filter((obj) =>
-    isOriginalImage(obj.Key ?? ""),
-  );
-
-  // 2) Fotky ze všech dní (YYYY-MM-DD/photos/*)
+  // Collect all day folders in the trip.
   const allObjects = await listObjects(client, basePrefix);
   const dates = new Set<string>();
   for (const obj of allObjects) {
@@ -91,47 +82,71 @@ async function getTripPhotoCandidates(tripName: string) {
       dates.add(maybeDate);
     }
   }
-
   const sortedDates = Array.from(dates).sort();
-  const dayPhotosByDate: Record<string, { key: string; filename: string }[]> =
-    {};
 
+  // 1) For each day, read hero_photo.json → the chosen day hero photo is a
+  //    strong candidate for the trip hero. Always include all day heroes.
+  const dayHeroes: { key: string; filename: string }[] = [];
+  const heroFilenames = new Set<string>();
   for (const date of sortedDates) {
-    const photos = await listObjects(
-      client,
-      `${basePrefix}${date}/photos/`,
-    );
-    const imagePhotos = photos.filter((obj) =>
-      isOriginalImage(obj.Key ?? ""),
-    );
-    if (imagePhotos.length > 0) {
-      dayPhotosByDate[date] = imagePhotos.map((obj) => {
-        const key = obj.Key!;
-        const filename = key.split("/").pop() || key;
-        return { key, filename };
-      });
+    const heroMetaKey = `${basePrefix}${date}/outputs/hero_photo.json`;
+    const raw = await getTextObject(client, heroMetaKey);
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw) as { filename?: string };
+      const filename = parsed.filename?.trim();
+      if (!filename) continue;
+      const photoKey = `${basePrefix}${date}/photos/${filename}`;
+      if (await objectExists(client, photoKey)) {
+        dayHeroes.push({ key: photoKey, filename });
+        heroFilenames.add(filename);
+      }
+    } catch {
+      /* ignore invalid hero_photo.json */
     }
   }
 
-  // Sběr všech fotek (summary + dny), deduplikace podle názvu souboru
-  const byFilename = new Map<string, { key: string; filename: string }>();
-  for (const obj of summaryImages) {
+  // 2) Collect the rest of the photos across summary + all days, excluding
+  //    day heroes (already included above).
+  const others: { key: string; filename: string }[] = [];
+  const seen = new Set<string>(heroFilenames);
+
+  const summaryPhotos = await listObjects(
+    client,
+    `${basePrefix}summary/photos/`,
+  );
+  for (const obj of summaryPhotos) {
+    if (!isOriginalImage(obj.Key ?? "")) continue;
     const key = obj.Key!;
     const filename = key.split("/").pop() || key;
-    if (!byFilename.has(filename)) byFilename.set(filename, { key, filename });
+    if (seen.has(filename)) continue;
+    seen.add(filename);
+    others.push({ key, filename });
   }
   for (const date of sortedDates) {
-    const dayList = dayPhotosByDate[date];
-    if (!dayList) continue;
-    for (const { key, filename } of dayList) {
-      if (!byFilename.has(filename)) byFilename.set(filename, { key, filename });
+    const photos = await listObjects(client, `${basePrefix}${date}/photos/`);
+    for (const obj of photos) {
+      if (!isOriginalImage(obj.Key ?? "")) continue;
+      const key = obj.Key!;
+      const filename = key.split("/").pop() || key;
+      if (seen.has(filename)) continue;
+      seen.add(filename);
+      others.push({ key, filename });
     }
   }
 
-  // Pouze fotky s existující _thumb.jpg, max 40 pro manuální náhled
+  // 3) Shuffle "others" and take enough to fill up to MAX_MANUAL_PHOTOS total.
+  const remainingSlots = Math.max(0, MAX_MANUAL_PHOTOS - dayHeroes.length);
+  for (let i = others.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [others[i], others[j]] = [others[j], others[i]];
+  }
+  const sample = others.slice(0, remainingSlots);
+
+  // 4) Resolve thumbnails for both pools; day heroes keep their order first,
+  //    random sample follows. Entries without a thumbnail are dropped.
   const candidates: { key: string; filename: string; url: string }[] = [];
-  for (const { key, filename } of Array.from(byFilename.values())) {
-    if (candidates.length >= MAX_MANUAL_PHOTOS) break;
+  for (const { key, filename } of [...dayHeroes, ...sample]) {
     const thumbKey = buildCacheKey(key, CACHE_SUFFIX_THUMB);
     if (!(await objectExists(client, thumbKey))) continue;
     const url = await getSignedR2Url(client, thumbKey);

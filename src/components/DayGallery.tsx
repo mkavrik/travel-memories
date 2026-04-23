@@ -14,7 +14,6 @@ type Photo = {
 };
 
 type Props = {
-  primaryUrl: string | null;
   date: string;
   photos: Photo[];
 };
@@ -30,39 +29,33 @@ function filenameSortKey(key: string): string {
   return filename.toLowerCase();
 }
 
-export function DayGallery({ primaryUrl, date, photos }: Props) {
+export function DayGallery({ photos }: Props) {
   const [open, setOpen] = useState(false);
   const [index, setIndex] = useState(0);
   const [sortedPhotos, setSortedPhotos] = useState<Photo[]>([]);
 
   const initialSlides = useMemo(() => {
     const all: Photo[] = [];
-    if (primaryUrl) {
-      all.push({ key: `${date}-hero`, url: primaryUrl });
-    }
     for (const photo of photos) {
       if (!photo.url) continue;
       all.push(photo);
     }
     return all;
-  }, [primaryUrl, photos, date]);
+  }, [photos]);
 
-  // Sort photos by EXIF date, fallback to filename
+  // Sort photos by EXIF capture time, fallback to filename. No special
+  // hero-first slot — the hero sits in its natural timeline position.
   useEffect(() => {
     let cancelled = false;
 
     async function sortByExif() {
-      // Hero photo always first, sort the rest
-      const hero = primaryUrl ? [initialSlides[0]] : [];
-      const rest = primaryUrl ? initialSlides.slice(1) : [...initialSlides];
-
-      if (rest.length <= 1) {
+      if (initialSlides.length <= 1) {
         setSortedPhotos(initialSlides);
         return;
       }
 
       const withDates = await Promise.all(
-        rest.map(async (photo) => {
+        initialSlides.map(async (photo) => {
           try {
             const exif = await exifr.parse(photo.url, {
               pick: ["DateTimeOriginal", "CreateDate", "ModifyDate"],
@@ -84,27 +77,25 @@ export function DayGallery({ primaryUrl, date, photos }: Props) {
         return filenameSortKey(a.photo.key).localeCompare(filenameSortKey(b.photo.key));
       });
 
-      setSortedPhotos([...hero, ...withDates.map((w) => w.photo)]);
+      setSortedPhotos(withDates.map((w) => w.photo));
     }
 
-    // Show immediately with filename sort, then re-sort with EXIF
-    const hero = primaryUrl ? [initialSlides[0]] : [];
-    const rest = primaryUrl ? initialSlides.slice(1) : [...initialSlides];
-    const filenameSorted = [...rest].sort((a, b) =>
+    // Show immediately with filename sort, then re-sort with EXIF once loaded.
+    const filenameSorted = [...initialSlides].sort((a, b) =>
       filenameSortKey(a.key).localeCompare(filenameSortKey(b.key)),
     );
-    setSortedPhotos([...hero, ...filenameSorted]);
+    setSortedPhotos(filenameSorted);
 
     sortByExif();
 
     return () => {
       cancelled = true;
     };
-  }, [initialSlides, primaryUrl]);
+  }, [initialSlides]);
 
   const slides = sortedPhotos.length > 0 ? sortedPhotos : initialSlides;
 
-  if (!primaryUrl && photos.length === 0) {
+  if (photos.length === 0) {
     return (
       <p className="text-sm text-slate-400">
         Pro tento den zatím nejsou nahrané žádné fotky.

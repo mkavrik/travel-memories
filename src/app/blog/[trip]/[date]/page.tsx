@@ -61,20 +61,15 @@ async function getDayData(tripParam: string, dateParam: string) {
       ? dates[currentIdx + 1]
       : null;
 
-  const heroBasename = dayData.heroFilename
-    ? dayData.heroFilename.replace(/\.[^.]+$/, "")
-    : null;
-
-  const galleryPhotos = photoUrls
-    .filter((p) => {
-      const base = p.key.replace(/_display\.jpg$/i, "").replace(/\.[^.]+$/, "");
-      return base !== heroBasename;
-    })
-    .map((p) => ({
-      key: p.key,
-      url: p.displayUrl,
-      displayUrl: p.displayUrl,
-    }));
+  // Include the hero photo in the gallery list — DayGallery sorts by EXIF,
+  // so the hero naturally lands in its timeline position. The hero also
+  // stands alone as a full-width banner via HeroBackgroundImage, but it is
+  // intentionally not duplicated at slot 0 of the gallery anymore.
+  const galleryPhotos = photoUrls.map((p) => ({
+    key: p.key,
+    url: p.displayUrl,
+    displayUrl: p.displayUrl,
+  }));
 
   return {
     tripName,
@@ -233,7 +228,6 @@ export default async function DayPage({
             <section id="fotky" className="scroll-mt-6 space-y-4">
               <h2 className="font-dela text-lg text-[var(--ink)]">Fotky</h2>
               <DayGallery
-                primaryUrl={heroUrl}
                 date={date}
                 photos={galleryPhotos.filter((p) => Boolean(p.url))}
               />

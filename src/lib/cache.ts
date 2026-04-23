@@ -676,6 +676,19 @@ export async function getCachedPhotoUrls(
 
 // --- Invalidation ---
 
+/**
+ * Invalidate cache scoped to what actually changed.
+ *
+ * - `invalidateCache(tripName, date)` — a day changed (upload, convert photos,
+ *   day hero, blog post, map, video). Wipes the day's rows + the trip cache
+ *   (so trip cover can refresh if it pointed to this day).
+ * - `invalidateCache(tripName)` — only trip-level state changed (trip hero,
+ *   summary upload). Touches only `trips_cache`. Day rows stay intact so
+ *   previously-signed photo URLs remain stable and the browser keeps its
+ *   cached bytes. Wiping day rows unnecessarily re-signs every URL with a
+ *   new X-Amz-Signature, which makes the browser treat each photo as a new
+ *   resource and re-download on the next visit.
+ */
 export async function invalidateCache(
   tripName: string,
   date?: string | null,
@@ -687,8 +700,6 @@ export async function invalidateCache(
     await supabase.from("photo_urls_cache").delete().eq("trip_name", tripName).eq("date", date);
     await supabase.from("trips_cache").delete().eq("trip_name", tripName);
   } else {
-    await supabase.from("days_cache").delete().eq("trip_name", tripName);
-    await supabase.from("photo_urls_cache").delete().eq("trip_name", tripName);
     await supabase.from("trips_cache").delete().eq("trip_name", tripName);
   }
 }

@@ -175,7 +175,6 @@ export default async function TripPage({
               <div className="space-y-4">
                 <h2 className="font-dela text-lg text-[var(--ink)]">Fotky</h2>
                 <DayGallery
-                  primaryUrl={null}
                   date={tripName}
                   photos={summaryGalleryPhotos}
                 />

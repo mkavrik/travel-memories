@@ -32,8 +32,14 @@ Generický AI výstup není cílem – klíčové je, aby výsledek zněl jako a
 MOBILNÍ SBĚR OBSAHU
   iPhone (Voice Memos, Fotky, GPS, Kamera)
         ↓
-UPLOAD (webová stránka /upload)
-  Výběr tripu + dne/summary → Nahrát do R2
+UPLOAD (webová stránka /upload, funguje i z mobilu)
+  Výběr tripu + dne/summary
+  → /api/upload-presign vrátí presigned PUT URL per soubor
+  → prohlížeč PUTuje přímo na R2 (Vercel je mimo datovou cestu,
+     takže 4.5 MB body limit na serverless funkce neplatí → OK
+     i pro stovky MB várky)
+  → /api/upload-finalize invaliduje Supabase cache
+  Progress bar: N/M souborů, aktuální filename, agregátní MB/%
         ↓
 CLOUDFLARE R2 (úložiště souborů)
   trips/[trip]/[datum]/
@@ -46,9 +52,15 @@ ZPRACOVÁNÍ (tlačítka na /upload stránce)
   │    (_thumb, _display, _ai)                  │
   │                                             │
   │  Nahrát videa do Stream                     │
-  │    MOV/MP4 → Cloudflare Stream              │
-  │    → automatická komprese + streaming       │
-  │    → _stream.json metadata                  │
+  │    MOV/MP4 → presigned R2 GET URL (24h)     │
+  │    → POST /stream/copy (Stream si video     │
+  │       stáhne z URL sám, bajty Vercelem      │
+  │       netečou)                              │
+  │    → _stream.json metadata (streamId)       │
+  │    Validace existujícího _stream.json při   │
+  │    sync: pokud streamId už neexistuje na    │
+  │    Stream, metadata se smažou a nahraje     │
+  │    se znovu                                 │
   │                                             │
   │  Přepsat audio                              │
   │    Whisper → prepis_raw.txt                 │
@@ -80,6 +92,9 @@ SUPABASE (caching)
   Trips, dny, fotky, blog posty cachované po dobu 7 dní
   Automatická invalidace při uploadu/generování obsahu
   Cache warming přes tlačítko "Zahřát cache" na /upload
+  Presigned GET URL nesou response-cache-control
+  (public, max-age=604800, immutable) → prohlížeč fotky
+  reálně cachuje mezi návštěvami
         ↓
 CLOUDFLARE STREAM (videa)
   Automatická komprese MOV → streamovatelné video
@@ -243,8 +258,8 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 |---|---|---|
 | Frontend + Backend | Next.js 14 | App Router, server components |
 | Hosting | Vercel | nasazení jedním příkazem |
-| Úložiště souborů | Cloudflare R2 | levné, pro osobní objem prakticky zadarmo |
-| Videa | Cloudflare Stream | automatická komprese + streaming, $5/měsíc |
+| Úložiště souborů | Cloudflare R2 | levné; upload z browseru přes presigned PUT URL (browser → R2, Vercel mimo); čtení z blogu přes presigned GET URL s `response-cache-control` |
+| Videa | Cloudflare Stream | automatická komprese + streaming, $5/měsíc; ingest přes `/stream/copy` z presigned R2 URL (video bajty přes Vercel netečou) |
 | Databáze | Supabase | cache vrstva, metadata; RLS zapnuté, zápis přes service_role |
 | 3D globus | react-globe.gl | Three.js wrapper, NASA textury |
 | Přepis audia | OpenAI Whisper | nejlepší kvalita přepisu |
@@ -314,9 +329,15 @@ trips/
 | `src/app/api/trip-dates/route.ts` | Seznam dnů existujících v R2 pro trip (použito autofillem v /upload) |
 | `src/app/api/get-hero/route.ts` | Vrátí aktuální hero fotku (filename, display URL, focusY) pro den / trip |
 | `src/app/api/save-hero-focus/route.ts` | GET/POST — načtení/uložení focusY do hero_photo.json + Supabase + revalidace |
-| `src/lib/cache.ts` | Supabase cache vrstva |
-| `src/lib/r2.ts` | Cloudflare R2 client |
+| `src/lib/cache.ts` | Supabase cache vrstva; všechny `getSignedR2Url` pro fotky/hero/mapy nesou `response-cache-control` přes `PHOTO_CACHE_CONTROL` |
+| `src/lib/r2.ts` | Cloudflare R2 client; `getSignedR2Url` s `responseCacheControl` option, `getSignedPutUrl` pro direct uploads, konstanta `PHOTO_CACHE_CONTROL` |
 | `src/lib/supabase.ts` | Supabase klienti (anon pro čtení, service_role pro zápis) |
+| `src/lib/cloudflareStream.ts` | `uploadVideoToStreamFromUrl` (přes `/stream/copy`), `streamVideoExists` (kontrola platnosti streamId), `getStreamVideoDetails`, `streamMetaKey` |
+| `src/app/api/upload-presign/route.ts` | POST — vrací presigned PUT URL per soubor; validuje přípony |
+| `src/app/api/upload-finalize/route.ts` | POST — invaliduje Supabase cache po direct-to-R2 uploadu |
+| `src/app/api/upload-to-stream/route.ts` | Jedno video do Streamu přes `/copy` + invalidace cache |
+| `src/app/api/upload-day-videos-to-stream/route.ts` | Všechna videa daného dne do Streamu; validuje existující `_stream.json` a přepíše stale |
+| `src/app/api/sync-all-videos-to-stream/route.ts` | Bulk sync všech dnů (streaming NDJSON progress); invaliduje cache pro každý den s videi |
 | `src/app/api/get-blog-post/route.ts` | GET API — načtení blog_post.txt z R2 |
 | `src/app/api/save-blog-post/route.ts` | POST API — uložení textu do R2 + update cache + revalidace |
 
@@ -385,6 +406,46 @@ trips/
 
 ---
 
+## Jednorázová konfigurace (setup)
+
+Mimo kód, aby produkční upload fungoval, musí být v pořádku:
+
+### Environment variables na Vercelu
+
+| Název | Účel | Sensitive? |
+|---|---|---|
+| `CLOUDFLARE_R2_ACCOUNT_ID` | Cloudflare account ID (čte ho i Stream kód — sdílená hodnota napříč službami) | ne |
+| `CLOUDFLARE_R2_ACCESS_KEY_ID` | R2 S3 API klíč | ✅ |
+| `CLOUDFLARE_R2_SECRET_ACCESS_KEY` | R2 S3 API tajný klíč | ✅ |
+| `CLOUDFLARE_R2_BUCKET_NAME` | `travel-memories` | ne |
+| `CLOUDFLARE_R2_S3_API_URL` | endpoint pro S3 klienta | ne |
+| `CLOUDFLARE_STREAM_API_TOKEN` | API token se scope `Account · Stream · Edit` | ✅ |
+| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | čtení | ne |
+| `SUPABASE_SERVICE_ROLE_KEY` | zápis do cache (obchází RLS) | ✅ |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `MAPY_CZ_API_KEY` / `MAPY_CZ_ID_API_KEY` | agenti a mapy | ✅ / ✅ / ne / ne |
+
+### R2 bucket CORS
+
+Prohlížeč PUTuje přímo na `https://<account>.r2.cloudflarestorage.com`. Bez CORS to browser zablokuje. V Cloudflare Dashboard → R2 → `travel-memories` → Settings → CORS policy:
+
+```json
+[
+  {
+    "AllowedOrigins": [
+      "https://travel-memories.vercel.app",
+      "https://*.vercel.app",
+      "http://localhost:3000"
+    ],
+    "AllowedMethods": ["PUT", "GET", "HEAD"],
+    "AllowedHeaders": ["Content-Type", "Content-Length"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+---
+
 ## Tipy a triky pro používání upload stránky
 
 - **GPX soubory pojmenovávej výstižně** — název souboru (bez přípony `.gpx`) se zobrazí jako nadpis karty trasy na stránce dne. Např. `Přejezd Oslo-Bergen.gpx` → karta "Přejezd Oslo-Bergen"; `Výstup na Galdhøpiggen.gpx` → karta "Výstup na Galdhøpiggen". Diakritika a mezery v názvu karty zůstanou; pro R2 klíče (`map_trail_[slug].png` atd.) se interně slugifikují.
@@ -392,6 +453,9 @@ trips/
 - **Po výběru hero fotky nastav focus point** — klikni na "Zobraz aktuální hero dne" / "Zobraz aktuální hero tripu", v náhledu posunuj slider a ulož. Focus point se uloží do `hero_photo.json` a Supabase cache, na blogu se projeví po revalidaci (automaticky).
 - **Autofill data:** po výběru tripu se datum automaticky nastaví na první den tripu v R2. Pokud přidáváš nový den (datum které ještě v R2 není), přepiš datum ručně.
 - **Při přepnutí tripu/dne se všechny náhledy vymažou** — záměrně, aby nevisely zůstatky z jiného kontextu.
+- **Mobile upload funguje přímo z produkčního webu** — fotky i videa jdou z browseru přímo na R2 (presigned PUT URL), takže Vercel 4.5 MB body limit neomezuje velké várky. Při uploadu běží progress bar: N/M souborů, aktuální filename, agregátní MB a %.
+- **Po změně souborů na R2 je potřeba invalidovat Supabase cache** — volá se automaticky z upload-finalize, generátorů map a Stream sync routes. Pokud se něco zdá „zaseklé", ručně spusť v Supabase SQL Editor: `DELETE FROM photo_urls_cache; DELETE FROM days_cache; DELETE FROM trips_cache;`. Next.js ISR cache se invaliduje přes `revalidatePath` v příslušných routes.
+- **Stream video po `/copy` chvíli enkóduje** — `uid` je k dispozici okamžitě, ale iframe může prvních pár minut ukazovat „Processing". Je to normální Cloudflare Stream flow; video naskočí samo.
 
 ---
 
@@ -434,8 +498,16 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - [x] Reset všech náhledů na /upload při přepnutí tripu/dne/sekce
 - [x] Fix: `getCachedTripDays` používá R2 jako source of truth pro seznam dnů (díra v Supabase nesmí skrýt den)
 - [x] Fix: `generate-trail-map` volá `revalidatePath` po úspěchu (ISR cache neblokovala nové mapy)
+- [x] Direct-to-R2 upload přes presigned PUT URL — obchází Vercel 4.5 MB body limit, velké várky (stovky MB) projdou
+- [x] Progress bar u uploadu — N/M souborů, aktuální filename, agregátní MB/%
+- [x] Mobile upload fix — čtení souborů přes DOM ref místo React state (iOS Safari invaliduje FileList v state)
+- [x] Cloudflare Stream přes `/stream/copy` — video bajty netečou přes Vercel, Stream si video stáhne z presigned R2 URL sám
+- [x] Validace existujících `_stream.json` proti Cloudflare Stream API — rozbité metadata se přepíšou re-uploadem
+- [x] Sync videí vždy invaliduje Supabase cache + `revalidatePath` (nezávisle na tom, jestli se něco nového nahrálo)
+- [x] `response-cache-control: public, max-age=604800, immutable` na všech podepsaných image URL (fotky, hero, mapy) — prohlížeč reálně cachuje mezi návštěvami
+- [x] Stream kód akceptuje `CLOUDFLARE_ACCOUNT_ID` i `CLOUDFLARE_R2_ACCOUNT_ID` (stejná hodnota napříč službami, žádná duplikace v env vars)
 
 ---
 
 *Dokument vytvořen na základě úvodní architektury diskutované s Claude (březen 2026).*
-*Poslední aktualizace: 22. dubna 2026 — více GPX tras na den (pěší / auto), karta per trasa, focus point hero fotek, autofill data, reset ech na /upload, fixy cache vrstvy a ISR revalidace.*
+*Poslední aktualizace: 23. dubna 2026 — direct-to-R2 upload přes presigned PUT URL, Cloudflare Stream přes `/copy`, progress bar, mobile upload fix, browser caching fotek přes `response-cache-control`.*
