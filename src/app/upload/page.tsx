@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { HeroFocusEditor } from "@/components/HeroFocusEditor";
 
 /** Read an NDJSON response stream, calling `onLine` for each parsed JSON object. */
@@ -27,6 +27,18 @@ async function readNdjsonStream<T extends Record<string, unknown>>(
       }
     }
   }
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }
 
 type SectionType = "day" | "summary";
@@ -126,7 +138,13 @@ export default function UploadPage() {
   const [sectionType, setSectionType] = useState<SectionType>("day");
   const [date, setDate] = useState("");
   const [files, setFiles] = useState<FileList | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{
+    loaded: number;
+    total: number;
+    percent: number;
+  } | null>(null);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcribeResult, setTranscribeResult] =
@@ -485,13 +503,19 @@ export default function UploadPage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!files || files.length === 0) {
+    // Read files from the DOM input as source of truth. iOS Safari can
+    // invalidate a FileList held in React state across re-renders even though
+    // the native input still displays the selected filename.
+    const selectedFiles = fileInputRef.current?.files ?? files;
+
+    if (!selectedFiles || selectedFiles.length === 0) {
       setResult({ error: "Vyber alespoň jeden soubor." });
       return;
     }
 
     setIsSubmitting(true);
     setResult(null);
+    setUploadProgress({ loaded: 0, total: 0, percent: 0 });
 
     try {
       const formData = new FormData();
@@ -501,32 +525,78 @@ export default function UploadPage() {
         formData.append("date", date);
       }
 
-      Array.from(files).forEach((file) => {
+      Array.from(selectedFiles).forEach((file) => {
         formData.append("files", file);
       });
 
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
+      const data = await new Promise<UploadResult>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/upload");
+
+        xhr.upload.addEventListener("progress", (ev) => {
+          if (ev.lengthComputable) {
+            setUploadProgress({
+              loaded: ev.loaded,
+              total: ev.total,
+              percent: Math.round((ev.loaded / ev.total) * 100),
+            });
+          }
+        });
+
+        xhr.upload.addEventListener("load", () => {
+          setUploadProgress((prev) =>
+            prev ? { ...prev, loaded: prev.total, percent: 100 } : prev,
+          );
+        });
+
+        xhr.addEventListener("load", () => {
+          let payload: UploadResult;
+          try {
+            payload = JSON.parse(xhr.responseText) as UploadResult;
+          } catch {
+            reject(new Error("Neplatná odpověď serveru."));
+            return;
+          }
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(payload);
+          } else {
+            resolve({ ...payload, error: payload.error || "Upload selhal." });
+          }
+        });
+
+        xhr.addEventListener("error", () =>
+          reject(new Error("Síťová chyba při uploadu.")),
+        );
+        xhr.addEventListener("abort", () =>
+          reject(new Error("Upload přerušen.")),
+        );
+
+        xhr.send(formData);
       });
 
-      const data = (await response.json()) as UploadResult;
-
-      if (!response.ok) {
-        setResult({ ...data, error: data.error || "Upload selhal." });
+      if (data.error) {
+        setResult(data);
         return;
       }
 
       setResult(data);
       setFiles(null);
-      (event.target as HTMLFormElement).reset();
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
       // Trigger re-fetch GPX seznamu — nově nahrané .gpx se objeví v sekci map.
       setGpxReloadTick((t) => t + 1);
     } catch (error) {
       console.error(error);
-      setResult({ error: "Nastala neočekávaná chyba." });
+      setResult({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Nastala neočekávaná chyba.",
+      });
     } finally {
       setIsSubmitting(false);
+      setUploadProgress(null);
     }
   }
 
@@ -1260,6 +1330,7 @@ export default function UploadPage() {
               Soubory
             </label>
             <input
+              ref={fileInputRef}
               type="file"
               multiple
               onChange={(e) => setFiles(e.target.files)}
@@ -1315,6 +1386,32 @@ export default function UploadPage() {
                 : "Generovat blog post"}
             </button>
           </div>
+
+          {uploadProgress && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs text-slate-300">
+                <span>
+                  {uploadProgress.percent < 100
+                    ? "Nahrávám do R2…"
+                    : "Dokončuji…"}
+                </span>
+                <span className="font-mono text-slate-400">
+                  {formatBytes(uploadProgress.loaded)}
+                  {uploadProgress.total > 0 && (
+                    <> / {formatBytes(uploadProgress.total)}</>
+                  )}
+                  {" · "}
+                  {uploadProgress.percent}%
+                </span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                <div
+                  className="h-full rounded-full bg-sky-500 transition-[width] duration-150 ease-out"
+                  style={{ width: `${uploadProgress.percent}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           {sectionType === "day" && (
             <div className="space-y-3 border-t border-slate-800 pt-4">
