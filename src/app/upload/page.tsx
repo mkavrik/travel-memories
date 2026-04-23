@@ -154,6 +154,12 @@ export default function UploadPage() {
   const [transcribeResult, setTranscribeResult] =
     useState<TranscribeResult | null>(null);
   const [heroMessage, setHeroMessage] = useState<string | null>(null);
+  const [heroProgress, setHeroProgress] = useState<{
+    scope: "day" | "trip";
+    message: string;
+    current?: number;
+    total?: number;
+  } | null>(null);
   const [isGeneratingBlogPost, setIsGeneratingBlogPost] = useState(false);
   const [blogPostStatus, setBlogPostStatus] = useState<
     "idle" | "deleting" | "generating"
@@ -900,6 +906,7 @@ export default function UploadPage() {
     }
 
     setHeroMessage(null);
+    setHeroProgress({ scope, message: "Spouštím…" });
 
     try {
       const res = await fetch("/api/select-hero-photo", {
@@ -911,32 +918,71 @@ export default function UploadPage() {
           scope,
         }),
       });
-      const data = (await res.json()) as
-        | HeroPhotoResult
-        | { error?: string };
 
-      if (!res.ok || "error" in data) {
-        setHeroMessage(
-          (data as { error?: string }).error ||
-            "Výběr hero fotky selhal.",
-        );
+      if (!res.ok || !res.body) {
+        setHeroMessage(`Výběr hero fotky selhal (HTTP ${res.status}).`);
         return;
       }
 
+      let finalResult: HeroPhotoResult | null = null;
+      let errorMessage: string | null = null;
+
+      await readNdjsonStream<{
+        progress?: string;
+        current?: number;
+        total?: number;
+        done?: boolean;
+        error?: string;
+        filename?: string;
+        reason?: string;
+        heroUrl?: string | null;
+        photos?: { filename: string; url: string }[];
+      }>(res.body, (line) => {
+        if (line.error) {
+          errorMessage = line.error;
+          return;
+        }
+        if (line.progress) {
+          setHeroProgress({
+            scope,
+            message: line.progress,
+            current: line.current,
+            total: line.total,
+          });
+        }
+        if (line.done && line.filename) {
+          finalResult = {
+            scope,
+            filename: line.filename,
+            reason: line.reason ?? "",
+            heroUrl: line.heroUrl ?? null,
+            photos: line.photos ?? [],
+          };
+        }
+      });
+
+      if (errorMessage) {
+        setHeroMessage(errorMessage);
+        return;
+      }
+      if (!finalResult) {
+        setHeroMessage("Výběr hero fotky skončil bez výsledku.");
+        return;
+      }
+
+      const result: HeroPhotoResult = finalResult;
       if (scope === "day") {
-        setDayHero(data as HeroPhotoResult);
-        setHeroMessage(
-          `Vybraná hero fotka dne: ${(data as HeroPhotoResult).filename}`,
-        );
+        setDayHero(result);
+        setHeroMessage(`Vybraná hero fotka dne: ${result.filename}`);
       } else {
-        setTripHero(data as HeroPhotoResult);
-        setHeroMessage(
-          `Vybraná hero fotka tripu: ${(data as HeroPhotoResult).filename}`,
-        );
+        setTripHero(result);
+        setHeroMessage(`Vybraná hero fotka tripu: ${result.filename}`);
       }
     } catch (error) {
       console.error(error);
       setHeroMessage("Nastala neočekávaná chyba při výběru hero fotky.");
+    } finally {
+      setHeroProgress(null);
     }
   }
 
@@ -1805,18 +1851,22 @@ export default function UploadPage() {
               <button
                 type="button"
                 onClick={() => handleSelectHeroPhoto("day")}
-                disabled={!tripName || !date}
+                disabled={!tripName || !date || heroProgress !== null}
                 className="rounded-lg border border-emerald-600/60 bg-slate-900 px-4 py-2.5 text-xs font-medium text-emerald-200 shadow-sm transition hover:border-emerald-500 hover:text-emerald-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
               >
-                Vybrat hero fotku dne
+                {heroProgress?.scope === "day"
+                  ? "Vybírám hero fotku dne…"
+                  : "Vybrat hero fotku dne"}
               </button>
               <button
                 type="button"
                 onClick={() => handleSelectHeroPhoto("trip")}
-                disabled={!tripName}
+                disabled={!tripName || heroProgress !== null}
                 className="rounded-lg border border-sky-600/60 bg-slate-900 px-4 py-2.5 text-xs font-medium text-sky-200 shadow-sm transition hover:border-sky-500 hover:text-sky-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
               >
-                Vybrat hero fotku tripu
+                {heroProgress?.scope === "trip"
+                  ? "Vybírám hero fotku tripu…"
+                  : "Vybrat hero fotku tripu"}
               </button>
               <button
                 type="button"
@@ -1841,6 +1891,43 @@ export default function UploadPage() {
                   : "Zobraz aktuální hero tripu"}
               </button>
             </div>
+            {heroProgress && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2 text-xs text-slate-300">
+                  <span className="min-w-0 truncate">
+                    {heroProgress.scope === "day" ? "Hero dne: " : "Hero tripu: "}
+                    <span className="text-slate-400">{heroProgress.message}</span>
+                  </span>
+                  {heroProgress.total != null && heroProgress.current != null && (
+                    <span className="shrink-0 font-mono text-slate-400">
+                      {heroProgress.current}/{heroProgress.total}
+                    </span>
+                  )}
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-150 ease-out ${
+                      heroProgress.scope === "day"
+                        ? "bg-emerald-500"
+                        : "bg-sky-500"
+                    }`}
+                    style={{
+                      width:
+                        heroProgress.total && heroProgress.total > 0
+                          ? `${Math.min(
+                              100,
+                              Math.round(
+                                ((heroProgress.current ?? 0) /
+                                  heroProgress.total) *
+                                  100,
+                              ),
+                            )}%`
+                          : "40%",
+                    }}
+                  />
+                </div>
+              </div>
+            )}
             {currentHeroError && (
               <p className="text-xs text-amber-300">{currentHeroError}</p>
             )}

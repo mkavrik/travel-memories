@@ -481,6 +481,7 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - [ ] Instagram agent – generování popisků a výběr fotek
 - [ ] Rozšíření pro ostatní cestovatele
 - [ ] Odhadovaná doba trvání trasy pěší – Mapy.cz Route API nepodporuje ski ani hiking routeType
+- [ ] **Vlastní doména + CDN před R2 pro sdílené cachování fotek** — pořídit `xar.travel` (TLD `.travel` je dražší, ~$100+/rok; registrátoři: Cloudflare Registrar, Porkbun, Namecheap), převést DNS na Cloudflare, napojit subdoménu `media.xar.travel` na R2 bucket přes Settings → Connect Custom Domain, přidat Cache Rule "Cache Everything" s Edge TTL 30 dní. Kód: `getSignedR2Url` pro fotky/hero/mapy nahradit deterministickým URL builderem (`https://media.xar.travel/{key}`), odstranit tabulku `photo_urls_cache` (URL se nemusí cachovat, jsou stabilní), invalidaci při přepisu fotky řešit Cloudflare Purge API. Celkově ~3 h focus work. **Přínos:** bajty fotek cached v ~300 Cloudflare edge POPech globálně — první návštěvník v regionu zaplatí R2 egress, další dostanou z edge cache. Doplňuje ISR + browser cache o sdílenou rychlost fotek napříč uživateli (to, co dnes chybí — dnes HTML je rychlé přes Vercel Edge, ale bajty fotek tahá každý nový návštěvník sám z R2). Samotný blog lze zároveň přestěhovat na `xar.travel` / `blog.xar.travel` místo `travel-memories.vercel.app`.
 - [ ] Smazat nepoužívané API `/api/profile-hero` (upload profilové fotky)
 - [x] Textový agent – vyladěný systémový prompt podle SKILL.md, model claude-opus-4-6
 - [x] Redesign blogu – 3D globus, tmavá paleta, sidebar navigace
