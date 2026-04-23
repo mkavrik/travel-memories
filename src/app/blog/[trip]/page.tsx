@@ -45,6 +45,7 @@ async function getTripData(tripParam: string) {
   return {
     tripName,
     heroUrl: tripData.coverUrl,
+    heroFocusY: tripData.coverFocusY,
     summaryText: tripData.summaryText,
     summaryGalleryPhotos: summaryGalleryPhotos.map((p) => ({
       key: p.key,
@@ -60,7 +61,7 @@ export default async function TripPage({
 }: {
   params: Params;
 }) {
-  const { tripName, heroUrl, summaryText, summaryGalleryPhotos, days } =
+  const { tripName, heroUrl, heroFocusY, summaryText, summaryGalleryPhotos, days } =
     await getTripData(params.trip);
 
   return (
@@ -70,6 +71,7 @@ export default async function TripPage({
         <div className="absolute inset-0 z-10 bg-gradient-to-b from-black/30 via-transparent to-[#050509]" />
         <HeroBackgroundImage
           heroUrl={heroUrl}
+          focusY={heroFocusY}
           fallbackGradient="radial-gradient(circle at top, #1f2933 0, #020617 60%)"
         />
         {/* No text overlay — name is in sidebar */}

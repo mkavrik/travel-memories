@@ -44,6 +44,42 @@ export type TrailStats = {
   minEleM: number;
 };
 
+export type RouteType = "hiking" | "car";
+
+/** Statistiky auto trasy — pouze vzdálenost (bez převýšení). */
+export type CarTrailStats = {
+  distanceKm: number;
+};
+
+/** Struktura trail_stats_[slug].json — pěší i auto. */
+export type TrailStatsFile = {
+  name: string;
+  slug: string;
+  gpxFilename: string;
+  routeType: RouteType;
+  mapLayer: MapLayer;
+  /** Pro pěší obsahuje plné TrailStats, pro auto pouze { distanceKm }. */
+  stats: TrailStats | CarTrailStats;
+  /** Pouze pro auto — odhadovaná doba jízdy v sekundách. null pokud Routing API selhalo. */
+  durationS: number | null;
+};
+
+/**
+ * Vyrobí URL-bezpečný slug z názvu GPX souboru (bez přípony).
+ * Lowercase, bez diakritiky, nealfanumerické znaky → `-`, runy pomlček zkráceny.
+ * Pokud by byl výsledek prázdný, vrací "trasa".
+ */
+export function slugifyRouteName(filenameOrName: string): string {
+  const base = filenameOrName.replace(/\.[^.]+$/, "");
+  const normalized = base
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || "trasa";
+}
+
 type GeoJSONPosition = [number, number] | [number, number, number];
 
 function extractCoordinatesFromGeoJSON(geojson: GeoJSON.FeatureCollection): GeoJSONPosition[] {
@@ -271,4 +307,41 @@ export async function svgToPngBuffer(svg: string): Promise<Buffer> {
   return sharp(Buffer.from(svg))
     .png()
     .toBuffer();
+}
+
+type LonLat = [number, number];
+
+/**
+ * Získá odhad doby jízdy autem mezi start a end bodem přes Mapy.cz Routing API.
+ * Vrací délku v sekundách, nebo null pokud API selže.
+ * Vstup souřadnic: [lon, lat].
+ */
+export async function fetchCarRouteDurationS(
+  start: LonLat,
+  end: LonLat,
+  apiKey: string,
+): Promise<number | null> {
+  const params = new URLSearchParams({
+    start: `${start[0]},${start[1]}`,
+    end: `${end[0]},${end[1]}`,
+    routeType: "car_fast",
+    lang: "cs",
+    format: "geojson",
+    apikey: apiKey,
+  });
+  const url = `https://api.mapy.cz/v1/routing/route?${params.toString()}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      duration?: number;
+      length?: number;
+    };
+    if (typeof data.duration === "number" && data.duration > 0) {
+      return Math.round(data.duration);
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

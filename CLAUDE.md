@@ -59,11 +59,12 @@ ZPRACOVÁNÍ (tlačítka na /upload stránce)
   │    Vstup: prepis_clean.txt + poznámky       │
   │    → blog_post.txt → R2 /outputs/           │
   │                                             │
-  │  Generovat mapu (pokud GPX)                 │
+  │  Generovat mapy (každý GPX zvlášť)          │
   │    GPX → Mapy.cz Static API                 │
-  │    → map_trail.png                          │
-  │    → map_elevation.png                      │
-  │    → trail_stats.json                       │
+  │    → map_trail_[slug].png                   │
+  │    → map_elevation_[slug].png  (pěší jen)   │
+  │    → trail_stats_[slug].json                │
+  │    Auto trasy: Routing API → doba jízdy     │
   │                                             │
   │  Vybrat hero fotku                          │
   │    fotky → Claude vision                    │
@@ -88,7 +89,8 @@ BLOG (sidebar navigace + obsah)
   /blog                    ← sidebar s tripy + 3D globus (react-globe.gl)
   /blog/[trip]             ← hero fotka + sidebar se dny + summary + fotky
   /blog/[trip]/[datum]     ← hero fotka + sidebar se sekcemi + blog post
-                              + fotky + videa + mapa + statistiky
+                              + fotky + videa + trasy (karta per trasa
+                              s mapou + statistikami / dobou jízdy)
                               + navigace ← předchozí / následující →
         ↓
 PUBLIKACE (budoucí fáze)
@@ -111,7 +113,7 @@ Všechny stránky blogu sdílí jednotnou strukturu:
 |---|---|---|
 | `/blog` | "Xar's travel" + seznam tripů (foto + název + datum) | 3D globus (react-globe.gl) |
 | `/blog/[trip]` | "Xar's travel" → název tripu + seznam dní (foto + datum) | Hero fotka nahoře, summary text + fotky |
-| `/blog/[trip]/[date]` | "Xar's travel" → trip → datum + sekční odkazy + prev/next navigace | Hero fotka nahoře, blog post + fotky + videa + mapa + statistiky |
+| `/blog/[trip]/[date]` | "Xar's travel" → trip → datum + sekční odkazy + prev/next navigace | Hero fotka nahoře, blog post + fotky + videa + trasy (karta per trasa) |
 
 ### 3D globus
 - Knihovna: `react-globe.gl`
@@ -189,10 +191,16 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 - Výstup: `blog_post.txt` v `/outputs/`
 - Zkontroluj výsledek na blogu `/blog/[trip]/[datum]`
 
-### 6. Vygenerovat mapu (pokud máš GPX)
-- Vyber typ mapové vrstvy (turistická / zimní / letecká)
-- Klikni **Generovat mapu**
-- Výstup: `map_trail.png`, `map_elevation.png`, `trail_stats.json`
+### 6. Vygenerovat mapy (pokud máš GPX)
+- V R2 složce `map/` může být **více GPX souborů** — každý = samostatná trasa
+- Pro každý GPX v seznamu vyber:
+  - **Typ trasy:** Pěší / Auto (Auto bez výškového profilu, místo toho doba jízdy)
+  - **Mapovou vrstvu:** turistická / zimní / letecká / základní
+- Klikni **Generovat mapy**
+- Progress ukazuje "Generuji mapu 1/N — [název]..."
+- Výstup per trasa: `map_trail_[slug].png`, `trail_stats_[slug].json`
+  a pro pěší navíc `map_elevation_[slug].png`
+- Pro auto se doba jízdy spočte přes Mapy.cz Routing API (`routeType=car_fast`)
 
 ### 7. Vybrat hero fotku
 - Klikni **Vybrat hero fotku dne**
@@ -243,7 +251,7 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 | Agenti (text) | Claude API (claude-opus-4-6) | blog post, Instagram popisky |
 | Agenti (fotky) | Claude API | výběr hero fotky, analýza obsahu |
 | Konverze fotek | sharp + heic-convert | HEIC → JPEG, 3 verze cache |
-| Mapy | Mapy.cz Static API | turistická/zimní/letecká mapa s GPX trasou |
+| Mapy | Mapy.cz Static API + Routing API | Static = mapa s GPX; Routing (`car_fast`) = doba jízdy pro auto trasy |
 | EXIF čtení | exifr | řazení fotek v galerii podle data pořízení |
 | CSS | Tailwind CSS | utility-first, CSS custom properties |
 | Fonty | Dela Gothic One + Nunito | Google Fonts via next/font |
@@ -260,8 +268,9 @@ trips/
       /photos/                  ← fotky (.jpg, .heic)
       /video/                   ← videa (.mov, .mp4)
       /notes/                   ← textové poznámky (.txt, .md)
-      /map/                     ← soubor s trasou dne (.gpx)
-      /outputs/                 ← výstupy agentů (blog post, Instagram)
+      /map/                     ← jeden nebo více GPX souborů (každý = samostatná trasa)
+      /outputs/                 ← výstupy agentů; per-trasa: map_trail_[slug].png,
+                                   map_elevation_[slug].png (pěší), trail_stats_[slug].json
     /2026-02-04/
       /audio/
       /photos/
@@ -296,7 +305,15 @@ trips/
 | `src/lib/tripCoords.ts` | Mapování názvů tripů na GPS souřadnice |
 | `src/app/globals.css` | CSS proměnné, globe styly, sidebar scrollbar |
 | `src/app/upload/page.tsx` | Admin stránka pro upload a zpracování obsahu |
-| `src/components/MapWithZoom.tsx` | Mapa trasy s lightbox zoomem |
+| `src/components/RouteCard.tsx` | Karta jedné trasy — mapa + statistiky / doba jízdy, lightbox zoom |
+| `src/components/HeroBackgroundImage.tsx` | Hero fotka jako `object-cover` s nastavitelným `focusY` (pozice ořezu) |
+| `src/components/HeroFocusEditor.tsx` | Klient UI — slider pro vertikální pozici ořezu hero fotky, live preview |
+| `src/lib/trailMap.ts` | Parsování GPX, Mapy.cz Static + Routing API, elevation SVG, slugify |
+| `src/app/api/generate-trail-map/route.ts` | Generování map pro pole GPX tras (streaming NDJSON) |
+| `src/app/api/check-gpx/route.ts` | Seznam GPX souborů v `map/` pro daný den |
+| `src/app/api/trip-dates/route.ts` | Seznam dnů existujících v R2 pro trip (použito autofillem v /upload) |
+| `src/app/api/get-hero/route.ts` | Vrátí aktuální hero fotku (filename, display URL, focusY) pro den / trip |
+| `src/app/api/save-hero-focus/route.ts` | GET/POST — načtení/uložení focusY do hero_photo.json + Supabase + revalidace |
 | `src/lib/cache.ts` | Supabase cache vrstva |
 | `src/lib/r2.ts` | Cloudflare R2 client |
 | `src/lib/supabase.ts` | Supabase klienti (anon pro čtení, service_role pro zápis) |
@@ -368,6 +385,16 @@ trips/
 
 ---
 
+## Tipy a triky pro používání upload stránky
+
+- **GPX soubory pojmenovávej výstižně** — název souboru (bez přípony `.gpx`) se zobrazí jako nadpis karty trasy na stránce dne. Např. `Přejezd Oslo-Bergen.gpx` → karta "Přejezd Oslo-Bergen"; `Výstup na Galdhøpiggen.gpx` → karta "Výstup na Galdhøpiggen". Diakritika a mezery v názvu karty zůstanou; pro R2 klíče (`map_trail_[slug].png` atd.) se interně slugifikují.
+- **Hero fotky používej vždy landscape (na šířku)** — hero banner je široký nízký pruh, portrétové fotky tam nedávají smysl.
+- **Po výběru hero fotky nastav focus point** — klikni na "Zobraz aktuální hero dne" / "Zobraz aktuální hero tripu", v náhledu posunuj slider a ulož. Focus point se uloží do `hero_photo.json` a Supabase cache, na blogu se projeví po revalidaci (automaticky).
+- **Autofill data:** po výběru tripu se datum automaticky nastaví na první den tripu v R2. Pokud přidáváš nový den (datum které ještě v R2 není), přepiš datum ručně.
+- **Při přepnutí tripu/dne se všechny náhledy vymažou** — záměrně, aby nevisely zůstatky z jiného kontextu.
+
+---
+
 ## Odhadované náklady
 
 | Položka | Cena za den |
@@ -386,10 +413,10 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - [ ] **Mobilní zobrazení blogu** — sidebar layout je optimalizovaný pro desktop, na mobilu se stacked layout (sidebar nahoře, obsah dole) potřebuje doladit: horizontální scroll karet, výška sidebaru, dotykové interakce na globu, hero fotka výška na menších obrazovkách
 - [ ] Zabezpečení admin části (/upload) – přidat autentizaci
 - [ ] Vizuální úpravy /upload stránky – přehlednější rozložení pro lepší UX
-- [ ] Automatické střihání videa (reels pro Instagram + delší video pro YouTube/blog)
+- [ ] Automatické střihání videa (reels pro Instagram + delší video pro YouTube/blog) — vyzkoušet Canva Magic Video a CyberLink PowerDirector (auto edit funkce pro kreativní automatický střih)
 - [ ] Instagram agent – generování popisků a výběr fotek
 - [ ] Rozšíření pro ostatní cestovatele
-- [ ] Odhadovaná doba trvání trasy – Mapy.cz Route API nepodporuje ski routeType
+- [ ] Odhadovaná doba trvání trasy pěší – Mapy.cz Route API nepodporuje ski ani hiking routeType
 - [ ] Smazat nepoužívané API `/api/profile-hero` (upload profilové fotky)
 - [x] Textový agent – vyladěný systémový prompt podle SKILL.md, model claude-opus-4-6
 - [x] Redesign blogu – 3D globus, tmavá paleta, sidebar navigace
@@ -401,8 +428,14 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - [x] Mapa trasy – zoom přes lightbox s Zoom pluginem
 - [x] Editace blog textu z /upload stránky — načtení/uložení blog_post.txt, update Supabase cache + Next.js revalidace
 - [x] RLS oprava — service_role klient pro zápis do Supabase cache
+- [x] Více GPX tras na jeden den — karta per trasa na stránce dne, pěší / auto typ, auto má dobu jízdy z Mapy.cz Routing API (migrace `002_multi_trail_routes.sql`)
+- [x] Autofill dne po výběru tripu na /upload (endpoint `/api/trip-dates`)
+- [x] Focus point hero fotek — slider v /upload, uložení do `hero_photo.json` + Supabase sloupec `cover_focus_y` (migrace `003_hero_focus_point.sql`), `object-position` na blogu
+- [x] Reset všech náhledů na /upload při přepnutí tripu/dne/sekce
+- [x] Fix: `getCachedTripDays` používá R2 jako source of truth pro seznam dnů (díra v Supabase nesmí skrýt den)
+- [x] Fix: `generate-trail-map` volá `revalidatePath` po úspěchu (ISR cache neblokovala nové mapy)
 
 ---
 
 *Dokument vytvořen na základě úvodní architektury diskutované s Claude (březen 2026).*
-*Poslední aktualizace: 8. dubna 2026 — editace blog textu z /upload, RLS oprava, cache invalidace.*
+*Poslední aktualizace: 22. dubna 2026 — více GPX tras na den (pěší / auto), karta per trasa, focus point hero fotek, autofill data, reset ech na /upload, fixy cache vrstvy a ISR revalidace.*

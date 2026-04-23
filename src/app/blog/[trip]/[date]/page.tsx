@@ -9,7 +9,7 @@ import {
 import { DayGallery } from "@/components/DayGallery";
 import { HeroBackgroundImage } from "@/components/HeroBackgroundImage";
 import { VideoGridWithLightbox } from "@/components/VideoGridWithLightbox";
-import { MapWithZoom } from "@/components/MapWithZoom";
+import { RouteCard } from "@/components/RouteCard";
 import { MarkdownProse } from "@/components/MarkdownProse";
 
 type Params = {
@@ -82,11 +82,10 @@ async function getDayData(tripParam: string, dateParam: string) {
     prevDate,
     nextDate,
     heroUrl: dayData.coverUrl,
+    heroFocusY: dayData.coverFocusY,
     blogPost: dayData.blogPost,
     galleryPhotos,
-    mapTrailUrl: dayData.mapTrailUrl,
-    mapElevationUrl: dayData.mapElevationUrl,
-    trailStats: dayData.trailStats,
+    routes: dayData.routes,
     streamVideos: dayData.streamVideos,
   };
 }
@@ -102,11 +101,10 @@ export default async function DayPage({
     prevDate,
     nextDate,
     heroUrl,
+    heroFocusY,
     blogPost,
     galleryPhotos,
-    mapTrailUrl,
-    mapElevationUrl,
-    trailStats,
+    routes,
     streamVideos,
   } = await getDayData(params.trip, params.date);
 
@@ -118,9 +116,8 @@ export default async function DayPage({
   if (streamVideos.length > 0) {
     sidebarLinks.push({ label: "Videa", anchor: "videa" });
   }
-  sidebarLinks.push({ label: "Trasa dne", anchor: "trasa" });
-  if (trailStats) {
-    sidebarLinks.push({ label: "Statistiky", anchor: "statistiky" });
+  if (routes.length > 0) {
+    sidebarLinks.push({ label: "Trasy dne", anchor: "trasy" });
   }
 
   return (
@@ -130,6 +127,7 @@ export default async function DayPage({
         <div className="absolute inset-0 z-10 bg-gradient-to-b from-black/30 via-transparent to-[#050509]" />
         <HeroBackgroundImage
           heroUrl={heroUrl}
+          focusY={heroFocusY}
           fallbackGradient="radial-gradient(circle at top, #1f2933 0, #020617 60%)"
         />
         {/* No text overlay — navigation is in sidebar */}
@@ -249,67 +247,27 @@ export default async function DayPage({
               </section>
             )}
 
-            {/* Trail map */}
-            <section id="trasa" className="scroll-mt-6 space-y-4">
-              <h2 className="font-dela text-lg text-[var(--ink)]">Trasa dne</h2>
-              {mapTrailUrl && mapElevationUrl ? (
-                <MapWithZoom
-                  mapTrailUrl={mapTrailUrl}
-                  mapElevationUrl={mapElevationUrl}
-                />
-              ) : (
-                <div className="flex items-center justify-center rounded-xl border border-dashed border-[rgba(255,255,255,0.12)] bg-[var(--content-card-bg)] p-6 font-nunito text-sm text-slate-400">
-                  Mapa trasy není k dispozici
-                </div>
-              )}
-            </section>
-
-            {/* Trail stats */}
-            {trailStats && (
-              <section id="statistiky" className="scroll-mt-6 space-y-4">
+            {/* Trasy dne */}
+            {routes.length > 0 && (
+              <section id="trasy" className="scroll-mt-6 space-y-4">
                 <h2 className="font-dela text-lg text-[var(--ink)]">
-                  Statistiky trasy
+                  {routes.length === 1 ? "Trasa dne" : "Trasy dne"}
                 </h2>
-                <div className="overflow-hidden rounded-xl border border-[var(--content-card-border)] bg-[var(--content-card-bg)]">
-                  <table className="w-full font-nunito text-sm text-slate-200">
-                    <tbody>
-                      <tr className="border-b border-[var(--content-card-border)]">
-                        <td className="py-3 pl-5 pr-3 text-slate-400">📍</td>
-                        <td className="py-3 pr-5">Celková délka</td>
-                        <td className="py-3 pr-5 text-right font-semibold">
-                          {trailStats.distanceKm.toFixed(1)} km
-                        </td>
-                      </tr>
-                      <tr className="border-b border-[var(--content-card-border)]">
-                        <td className="py-3 pl-5 pr-3 text-slate-400">⬆️</td>
-                        <td className="py-3 pr-5">Převýšení nahoru</td>
-                        <td className="py-3 pr-5 text-right font-semibold">
-                          {trailStats.elevationGainM} m
-                        </td>
-                      </tr>
-                      <tr className="border-b border-[var(--content-card-border)]">
-                        <td className="py-3 pl-5 pr-3 text-slate-400">⬇️</td>
-                        <td className="py-3 pr-5">Převýšení dolů</td>
-                        <td className="py-3 pr-5 text-right font-semibold">
-                          {trailStats.elevationLossM} m
-                        </td>
-                      </tr>
-                      <tr className="border-b border-[var(--content-card-border)]">
-                        <td className="py-3 pl-5 pr-3 text-slate-400">🏔️</td>
-                        <td className="py-3 pr-5">Nejvyšší bod</td>
-                        <td className="py-3 pr-5 text-right font-semibold">
-                          {trailStats.maxEleM} m n.m.
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className="py-3 pl-5 pr-3 text-slate-400">📉</td>
-                        <td className="py-3 pr-5">Nejnižší bod</td>
-                        <td className="py-3 pr-5 text-right font-semibold">
-                          {trailStats.minEleM} m n.m.
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+                <div className="space-y-5">
+                  {routes.map((route, idx) => {
+                    const heading =
+                      route.name?.trim() ||
+                      (route.routeType === "car"
+                        ? "Přejezd autem"
+                        : `Trasa ${idx + 1}`);
+                    return (
+                      <RouteCard
+                        key={route.slug}
+                        route={route}
+                        heading={heading}
+                      />
+                    );
+                  })}
                 </div>
               </section>
             )}

@@ -14,7 +14,7 @@ import {
   objectExists,
 } from "@/lib/r2";
 import { createSupabaseClient } from "@/lib/supabase";
-import type { TrailStats } from "@/lib/trailMap";
+import type { TrailStatsFile } from "@/lib/trailMap";
 import { getStreamVideoDetails } from "@/lib/cloudflareStream";
 
 const CACHE_TTL_DAYS = 7;
@@ -31,7 +31,16 @@ export type CachedTripData = {
   coverUrl: string | null;
   firstDate: string | null;
   summaryText: string | null;
+  coverFocusY: number;
 };
+
+const DEFAULT_FOCUS_Y = 50;
+
+function parseFocusY(raw: unknown): number {
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_FOCUS_Y;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
 
 async function loadTripFromR2(tripName: string): Promise<CachedTripData> {
   const client = createR2Client();
@@ -54,12 +63,19 @@ async function loadTripFromR2(tripName: string): Promise<CachedTripData> {
   );
 
   let coverUrl: string | null = null;
+  let coverFocusY = DEFAULT_FOCUS_Y;
   const heroMetaKey = `${basePrefix}summary/outputs/hero_photo.json`;
   if (await objectExists(client, heroMetaKey)) {
     const raw = await getTextObject(client, heroMetaKey);
     if (raw) {
       try {
-        const parsed = JSON.parse(raw) as { filename?: string };
+        const parsed = JSON.parse(raw) as {
+          filename?: string;
+          focusY?: unknown;
+        };
+        if (parsed.focusY !== undefined) {
+          coverFocusY = parseFocusY(parsed.focusY);
+        }
         const filename = (parsed.filename ?? "").trim();
         if (filename) {
           const basename = filename.replace(/\.[^.]+$/, "");
@@ -116,7 +132,7 @@ async function loadTripFromR2(tripName: string): Promise<CachedTripData> {
   const summaryTextKey = `${basePrefix}summary/outputs/blog_post.txt`;
   const summaryText = (await getTextObject(client, summaryTextKey)) ?? null;
 
-  return { coverUrl, firstDate, summaryText };
+  return { coverUrl, firstDate, summaryText, coverFocusY };
 }
 
 export async function getCachedTripData(
@@ -135,7 +151,7 @@ export async function getCachedTripData(
       const t0 = Date.now();
       const { data: row, error: selectError } = await supabase
         .from("trips_cache")
-        .select("cover_url, first_date, summary_text, updated_at")
+        .select("cover_url, first_date, summary_text, cover_focus_y, updated_at")
         .eq("trip_name", tripName)
         .maybeSingle();
       const ms = Date.now() - t0;
@@ -148,6 +164,7 @@ export async function getCachedTripData(
           coverUrl: row.cover_url ?? null,
           firstDate: row.first_date ?? null,
           summaryText: row.summary_text ?? null,
+          coverFocusY: parseFocusY(row.cover_focus_y),
         };
       }
     } catch (e) {
@@ -168,6 +185,7 @@ export async function getCachedTripData(
           cover_url: loaded.coverUrl,
           first_date: loaded.firstDate,
           summary_text: loaded.summaryText,
+          cover_focus_y: loaded.coverFocusY,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "trip_name" },
@@ -192,15 +210,19 @@ export async function getTripNames(): Promise<string[]> {
 
 // --- Day cache ---
 
+/** Jedna trasa dne (pěší nebo auto) po načtení z R2 / cache. */
+export type RouteInfo = TrailStatsFile & {
+  mapTrailUrl: string;
+  /** Null pro auto trasy (bez výškového profilu). */
+  mapElevationUrl: string | null;
+};
+
 export type CachedDayData = {
   coverUrl: string | null;
+  coverFocusY: number;
   heroFilename: string | null;
   blogPost: string | null;
-  hasMap: boolean;
-  hasGpx: boolean;
-  mapTrailUrl: string | null;
-  mapElevationUrl: string | null;
-  trailStats: TrailStats | null;
+  routes: RouteInfo[];
   streamVideos: {
     streamId: string;
     filename: string;
@@ -226,13 +248,20 @@ async function loadDayFromR2(
   );
 
   let coverUrl: string | null = null;
+  let coverFocusY = DEFAULT_FOCUS_Y;
   let heroFilename: string | null = null;
   const heroMetaKey = `${basePrefix}outputs/hero_photo.json`;
   if (await objectExists(client, heroMetaKey)) {
     const rawHero = await getTextObject(client, heroMetaKey);
     if (rawHero) {
       try {
-        const parsed = JSON.parse(rawHero) as { filename?: string };
+        const parsed = JSON.parse(rawHero) as {
+          filename?: string;
+          focusY?: unknown;
+        };
+        if (parsed.focusY !== undefined) {
+          coverFocusY = parseFocusY(parsed.focusY);
+        }
         if (parsed.filename) {
           heroFilename = parsed.filename;
           const photosPrefix = `${basePrefix}photos/`;
@@ -260,29 +289,57 @@ async function loadDayFromR2(
     }
   }
 
-  const mapTrailKey = `${basePrefix}outputs/map_trail.png`;
-  const mapElevationKey = `${basePrefix}outputs/map_elevation.png`;
-  const hasMapTrail = await objectExists(client, mapTrailKey);
-  const hasMapElevation = await objectExists(client, mapElevationKey);
-  const hasMap = hasMapTrail && hasMapElevation;
-  const mapTrailUrl = hasMapTrail
-    ? await getSignedR2Url(client, mapTrailKey, SIGNED_URL_EXPIRY_SEC)
-    : null;
-  const mapElevationUrl = hasMapElevation
-    ? await getSignedR2Url(client, mapElevationKey, SIGNED_URL_EXPIRY_SEC)
-    : null;
+  // Načtení všech tras: pro každý trail_stats_[slug].json v outputs/
+  // podepíšeme URL na mapu a (pro pěší) výškový profil.
+  const outputsPrefix = `${basePrefix}outputs/`;
+  const outputObjects = await listObjects(client, outputsPrefix);
+  const statsKeys = outputObjects
+    .map((o) => o.Key ?? "")
+    .filter((k) => {
+      const filename = k.split("/").pop() ?? "";
+      return (
+        filename.startsWith("trail_stats_") && filename.endsWith(".json")
+      );
+    })
+    .sort();
 
-  const trailStatsKey = `${basePrefix}outputs/trail_stats.json`;
-  let trailStats: TrailStats | null = null;
-  if (await objectExists(client, trailStatsKey)) {
-    const raw = await getTextObject(client, trailStatsKey);
-    if (raw) {
-      try {
-        trailStats = JSON.parse(raw) as TrailStats;
-      } catch {
-        /* ignore */
+  const routes: RouteInfo[] = [];
+  for (const statsKey of statsKeys) {
+    const raw = await getTextObject(client, statsKey);
+    if (!raw) continue;
+    let parsed: TrailStatsFile;
+    try {
+      parsed = JSON.parse(raw) as TrailStatsFile;
+    } catch {
+      continue;
+    }
+    if (!parsed.slug || !parsed.routeType) continue;
+
+    const trailKey = `${outputsPrefix}map_trail_${parsed.slug}.png`;
+    if (!(await objectExists(client, trailKey))) continue;
+    const mapTrailUrl = await getSignedR2Url(
+      client,
+      trailKey,
+      SIGNED_URL_EXPIRY_SEC,
+    );
+
+    let mapElevationUrl: string | null = null;
+    if (parsed.routeType === "hiking") {
+      const elevationKey = `${outputsPrefix}map_elevation_${parsed.slug}.png`;
+      if (await objectExists(client, elevationKey)) {
+        mapElevationUrl = await getSignedR2Url(
+          client,
+          elevationKey,
+          SIGNED_URL_EXPIRY_SEC,
+        );
       }
     }
+
+    routes.push({
+      ...parsed,
+      mapTrailUrl,
+      mapElevationUrl,
+    });
   }
 
   const videoPrefix = `${basePrefix}video/`;
@@ -321,19 +378,12 @@ async function loadDayFromR2(
     }
   }
 
-  const hasGpx = await objectExists(client, `${basePrefix}map/`)
-    ? (await listObjects(client, `${basePrefix}map/`)).length > 0
-    : false;
-
   return {
     coverUrl,
+    coverFocusY,
     heroFilename,
     blogPost,
-    hasMap,
-    hasGpx,
-    mapTrailUrl,
-    mapElevationUrl,
-    trailStats,
+    routes,
     streamVideos,
   };
 }
@@ -364,13 +414,10 @@ export async function getCachedDayData(
         console.log(`Cache HIT: ${key} (Supabase ${ms} ms)`);
         return {
           coverUrl: row.cover_url ?? null,
+          coverFocusY: parseFocusY(row.cover_focus_y),
           heroFilename: row.hero_filename ?? null,
           blogPost: row.blog_post ?? null,
-          hasMap: Boolean(row.has_map),
-          hasGpx: Boolean(row.has_gpx),
-          mapTrailUrl: row.map_trail_url ?? null,
-          mapElevationUrl: row.map_elevation_url ?? null,
-          trailStats: row.trail_stats as TrailStats | null,
+          routes: (row.routes as RouteInfo[] | null) ?? [],
           streamVideos: (row.stream_videos as CachedDayData["streamVideos"]) ?? [],
         };
       }
@@ -396,13 +443,10 @@ export async function getCachedDayData(
           trip_name: tripName,
           date,
           cover_url: loaded.coverUrl,
+          cover_focus_y: loaded.coverFocusY,
           hero_filename: loaded.heroFilename,
           blog_post: loaded.blogPost,
-          has_map: loaded.hasMap,
-          has_gpx: loaded.hasGpx,
-          map_trail_url: loaded.mapTrailUrl,
-          map_elevation_url: loaded.mapElevationUrl,
-          trail_stats: loaded.trailStats,
+          routes: loaded.routes,
           stream_videos: loaded.streamVideos,
           updated_at: new Date().toISOString(),
         },
@@ -420,7 +464,11 @@ export async function getCachedDayData(
   return loaded;
 }
 
-/** List of days for a trip (date + coverUrl) from cache or R2. */
+/**
+ * Seznam dnů tripu. Source of truth pro existenci dne je R2 (vždy listujeme).
+ * Supabase použijeme pouze jako cache pro cover_url — díra v Supabase
+ * nesmí skrýt den, který v R2 existuje.
+ */
 export async function getCachedTripDays(
   tripName: string,
 ): Promise<{ date: string; coverUrl: string | null }[]> {
@@ -429,80 +477,51 @@ export async function getCachedTripDays(
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - CACHE_TTL_DAYS);
 
+  // 1) Ground truth — dny z R2.
+  const tR2 = Date.now();
+  const client = createR2Client();
+  const basePrefix = `trips/${tripName}/`;
+  const allObjects = await listObjects(client, basePrefix);
+  const datesSet = new Set<string>();
+  for (const obj of allObjects) {
+    const k = obj.Key || "";
+    const relative = k.replace(basePrefix, "");
+    const [maybeDate] = relative.split("/");
+    if (/^\d{4}-\d{2}-\d{2}$/.test(maybeDate)) datesSet.add(maybeDate);
+  }
+  const sortedDates = Array.from(datesSet).sort();
+  console.log(
+    `${key}: R2 list ${Date.now() - tR2} ms, ${sortedDates.length} days`,
+  );
+
+  // 2) Cover URLs — přednostně z Supabase (fresh), jinak přes getCachedDayData (R2).
+  const freshCovers = new Map<string, string | null>();
   if (supabase) {
     try {
-      const t0 = Date.now();
-      const { data: rows, error: selectError } = await supabase
+      const { data: rows } = await supabase
         .from("days_cache")
         .select("date, cover_url, updated_at")
-        .eq("trip_name", tripName)
-        .order("date", { ascending: true });
-      const ms = Date.now() - t0;
-      if (selectError) {
-        console.error(`Cache Supabase SELECT error [${key}]:`, selectError);
-      }
-      const fresh = rows?.filter((r) => new Date(r.updated_at) >= cutoff) ?? [];
-      if (fresh.length > 0) {
-        console.log(`Cache HIT: ${key} (${fresh.length} days, Supabase ${ms} ms)`);
-        return fresh.map((r) => ({
-          date: r.date,
-          coverUrl: r.cover_url ?? null,
-        }));
+        .eq("trip_name", tripName);
+      for (const r of rows ?? []) {
+        if (new Date(r.updated_at) >= cutoff) {
+          freshCovers.set(r.date, r.cover_url ?? null);
+        }
       }
     } catch (e) {
       console.error(`Cache Supabase exception [${key}] (select):`, e);
     }
   }
 
-  console.log(`Cache MISS: ${key}`);
-  const tR2 = Date.now();
-  const client = createR2Client();
-  const basePrefix = `trips/${tripName}/`;
-  const allObjects = await listObjects(client, basePrefix);
-  const dates = new Set<string>();
-  for (const obj of allObjects) {
-    const k = obj.Key || "";
-    const relative = k.replace(basePrefix, "");
-    const [maybeDate] = relative.split("/");
-    if (/^\d{4}-\d{2}-\d{2}$/.test(maybeDate)) dates.add(maybeDate);
-  }
-  const sortedDates = Array.from(dates).sort();
   const days: { date: string; coverUrl: string | null }[] = [];
   for (const date of sortedDates) {
-    const dayData = await getCachedDayData(tripName, date);
-    days.push({
-      date,
-      coverUrl: dayData?.coverUrl ?? null,
-    });
-    // Po načtení z R2 uložit den do days_cache (upsert), aby příští request použil Supabase
-    if (supabase && dayData) {
-      try {
-        const { error: upsertError } = await supabase.from("days_cache").upsert(
-          {
-            trip_name: tripName,
-            date,
-            cover_url: dayData.coverUrl,
-            hero_filename: dayData.heroFilename,
-            blog_post: dayData.blogPost,
-            has_map: dayData.hasMap,
-            has_gpx: dayData.hasGpx,
-            map_trail_url: dayData.mapTrailUrl,
-            map_elevation_url: dayData.mapElevationUrl,
-            trail_stats: dayData.trailStats,
-            stream_videos: dayData.streamVideos,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "trip_name,date" },
-        );
-        if (upsertError) {
-          console.error(`Cache Supabase UPSERT error [${key}] day ${date}:`, upsertError);
-        }
-      } catch (e) {
-        console.error(`Cache Supabase exception [${key}] (upsert day ${date}):`, e);
-      }
+    if (freshCovers.has(date)) {
+      days.push({ date, coverUrl: freshCovers.get(date) ?? null });
+      continue;
     }
+    // Chybí v Supabase (nebo je stale) — načti z R2 a rovnou upsertni.
+    const dayData = await getCachedDayData(tripName, date);
+    days.push({ date, coverUrl: dayData?.coverUrl ?? null });
   }
-  console.log(`Cache MISS: ${key} (R2 load ${Date.now() - tR2} ms, ${days.length} days)`);
   return days;
 }
 

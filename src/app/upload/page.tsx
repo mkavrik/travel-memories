@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { HeroFocusEditor } from "@/components/HeroFocusEditor";
 
 /** Read an NDJSON response stream, calling `onLine` for each parsed JSON object. */
 async function readNdjsonStream<T extends Record<string, unknown>>(
@@ -70,16 +71,38 @@ interface HeroPhotoResult {
   photos: { filename: string; url: string }[];
 }
 
-type TrailMapPhase =
-  | "loading_gpx"
-  | "generating_map"
-  | "generating_elevation"
-  | "done";
+interface CurrentHeroData {
+  filename: string;
+  heroUrl: string | null;
+  focusY: number;
+  reason: string | null;
+}
+
+type RouteType = "hiking" | "car";
+
+interface GpxFileItem {
+  filename: string;
+  displayName: string;
+}
+
+interface GpxConfigState {
+  filename: string;
+  displayName: string;
+  routeType: RouteType;
+  mapLayer: string;
+}
+
+interface GeneratedRoutePreview {
+  slug: string;
+  name: string;
+  routeType: RouteType;
+  mapTrailUrl: string;
+  mapElevationUrl: string | null;
+}
 
 interface TrailMapResult {
   error?: string;
-  mapTrailUrl?: string;
-  mapElevationUrl?: string;
+  routes?: GeneratedRoutePreview[];
 }
 
 const MAP_LAYER_OPTIONS: { value: string; label: string }[] = [
@@ -87,6 +110,11 @@ const MAP_LAYER_OPTIONS: { value: string; label: string }[] = [
   { value: "winter", label: "Zimní mapa" },
   { value: "aerial", label: "Letecká mapa" },
   { value: "basic", label: "Základní mapa" },
+];
+
+const ROUTE_TYPE_OPTIONS: { value: RouteType; label: string }[] = [
+  { value: "hiking", label: "Pěší trasa" },
+  { value: "car", label: "Auto trasa" },
 ];
 
 export default function UploadPage() {
@@ -119,11 +147,20 @@ export default function UploadPage() {
   );
   const [dayHero, setDayHero] = useState<HeroPhotoResult | null>(null);
   const [tripHero, setTripHero] = useState<HeroPhotoResult | null>(null);
-  const [hasGpx, setHasGpx] = useState(false);
-  const [mapLayer, setMapLayer] = useState("tourist");
+  const [currentDayHero, setCurrentDayHero] = useState<CurrentHeroData | null>(
+    null,
+  );
+  const [currentTripHero, setCurrentTripHero] =
+    useState<CurrentHeroData | null>(null);
+  const [isLoadingCurrentHero, setIsLoadingCurrentHero] = useState<
+    "day" | "trip" | null
+  >(null);
+  const [currentHeroError, setCurrentHeroError] = useState<string | null>(null);
+  const [gpxFiles, setGpxFiles] = useState<GpxFileItem[]>([]);
+  const [gpxConfigs, setGpxConfigs] = useState<GpxConfigState[]>([]);
+  const [gpxReloadTick, setGpxReloadTick] = useState(0);
   const [isGeneratingTrailMap, setIsGeneratingTrailMap] = useState(false);
-  const [trailMapPhase, setTrailMapPhase] =
-    useState<TrailMapPhase | null>(null);
+  const [trailMapProgress, setTrailMapProgress] = useState<string | null>(null);
   const [trailMapResult, setTrailMapResult] =
     useState<TrailMapResult | null>(null);
   const [isConvertingPhotos, setIsConvertingPhotos] = useState(false);
@@ -205,8 +242,32 @@ export default function UploadPage() {
   }, []);
 
   useEffect(() => {
+    const trimmed = tripName?.trim();
+    if (!trimmed) return;
+    let isMounted = true;
+    async function loadDates() {
+      try {
+        const res = await fetch(
+          `/api/trip-dates?tripName=${encodeURIComponent(trimmed!)}`,
+        );
+        const data = (await res.json()) as { dates?: string[] };
+        if (!isMounted) return;
+        const first = data.dates?.[0];
+        if (first) setDate(first);
+      } catch {
+        /* ignore */
+      }
+    }
+    void loadDates();
+    return () => {
+      isMounted = false;
+    };
+  }, [tripName]);
+
+  useEffect(() => {
     if (sectionType !== "day" || !tripName?.trim() || !date?.trim()) {
-      setHasGpx(false);
+      setGpxFiles([]);
+      setGpxConfigs([]);
       return;
     }
     let isMounted = true;
@@ -215,23 +276,120 @@ export default function UploadPage() {
         const res = await fetch(
           `/api/check-gpx?tripName=${encodeURIComponent(tripName.trim())}&date=${encodeURIComponent(date.trim())}`,
         );
-        const data = (await res.json()) as { hasGpx?: boolean };
-        if (isMounted) setHasGpx(data.hasGpx ?? false);
+        const data = (await res.json()) as {
+          hasGpx?: boolean;
+          files?: GpxFileItem[];
+        };
+        if (!isMounted) return;
+        const files = data.files ?? [];
+        setGpxFiles(files);
+        setGpxConfigs((prev) => {
+          const byName = new Map(prev.map((c) => [c.filename, c]));
+          return files.map((f) => {
+            const existing = byName.get(f.filename);
+            return {
+              filename: f.filename,
+              displayName: f.displayName,
+              routeType: existing?.routeType ?? "hiking",
+              mapLayer: existing?.mapLayer ?? "tourist",
+            };
+          });
+        });
       } catch {
-        if (isMounted) setHasGpx(false);
+        if (isMounted) {
+          setGpxFiles([]);
+          setGpxConfigs([]);
+        }
       }
     }
     void check();
     return () => {
       isMounted = false;
     };
+  }, [sectionType, tripName, date, gpxReloadTick]);
+
+  // Reset všech náhledů/ech při přepnutí tripu/dne/sekce,
+  // aby nevisel starý obsah z předchozího kontextu.
+  useEffect(() => {
+    setResult(null);
+    setTranscribeResult(null);
+    setBlogPostResult(null);
+    setSummaryResult(null);
+    setDayHero(null);
+    setTripHero(null);
+    setCurrentDayHero(null);
+    setCurrentTripHero(null);
+    setCurrentHeroError(null);
+    setHeroMessage(null);
+    setStreamDayResult(null);
+    setStreamSyncResult(null);
+    setStreamSyncProgress(null);
+    setCleanupPhotosResult(null);
+    setConvertPhotosProgress(null);
+    setTrailMapResult(null);
+    setTrailMapProgress(null);
+    setEditText("");
+    setEditTextLoaded(false);
+    setEditTextNotFound(false);
+    setEditTextMessage(null);
+    setWarmCacheLines([]);
+    setWarmCacheSummary(null);
   }, [sectionType, tripName, date]);
+
+  async function handleShowCurrentHero(scope: "day" | "trip") {
+    if (!tripName?.trim()) {
+      setCurrentHeroError("Vyber nejdřív trip.");
+      return;
+    }
+    if (scope === "day" && !date?.trim()) {
+      setCurrentHeroError("Vyber nejdřív datum.");
+      return;
+    }
+    setCurrentHeroError(null);
+    setIsLoadingCurrentHero(scope);
+    try {
+      const params = new URLSearchParams({ tripName: tripName.trim() });
+      if (scope === "day") params.set("date", date.trim());
+      const res = await fetch(`/api/get-hero?${params.toString()}`);
+      const data = (await res.json()) as {
+        exists?: boolean;
+        filename?: string;
+        heroUrl?: string | null;
+        focusY?: number;
+        reason?: string | null;
+        error?: string;
+      };
+      if (!res.ok || !data.exists || !data.filename) {
+        setCurrentHeroError(data.error ?? "Hero fotka není nastavena.");
+        if (scope === "day") setCurrentDayHero(null);
+        else setCurrentTripHero(null);
+        return;
+      }
+      const current: CurrentHeroData = {
+        filename: data.filename,
+        heroUrl: data.heroUrl ?? null,
+        focusY: typeof data.focusY === "number" ? data.focusY : 50,
+        reason: data.reason ?? null,
+      };
+      if (scope === "day") setCurrentDayHero(current);
+      else setCurrentTripHero(current);
+    } catch (err) {
+      console.error(err);
+      setCurrentHeroError("Nastala neočekávaná chyba.");
+    } finally {
+      setIsLoadingCurrentHero(null);
+    }
+  }
 
   async function handleGenerateTrailMap() {
     setTrailMapResult(null);
-    setTrailMapPhase(null);
+    setTrailMapProgress(null);
     if (!tripName?.trim() || !date?.trim()) {
       setTrailMapResult({ error: "Zadej trip a datum." });
+      return;
+    }
+    if (gpxConfigs.length === 0) {
+      setTrailMapResult({ error: "Pro tento den není žádný GPX soubor." });
       return;
     }
     setIsGeneratingTrailMap(true);
@@ -242,46 +400,86 @@ export default function UploadPage() {
         body: JSON.stringify({
           tripName: tripName.trim(),
           date: date.trim(),
-          mapLayer,
+          routes: gpxConfigs.map((c) => ({
+            gpxFilename: c.filename,
+            routeType: c.routeType,
+            mapLayer: c.mapLayer,
+          })),
         }),
       });
       if (!res.ok || !res.body) {
         setTrailMapResult({
-          error: res.ok ? "Prázdná odpověď." : "Generování mapy selhalo.",
+          error: res.ok ? "Prázdná odpověď." : "Generování map selhalo.",
         });
         return;
       }
       await readNdjsonStream<{
         phase?: string;
         error?: string;
-        mapTrailUrl?: string;
-        mapElevationUrl?: string;
+        index?: number;
+        total?: number;
+        slug?: string;
+        name?: string;
+        routes?: GeneratedRoutePreview[];
       }>(res.body, (data) => {
         if (data.error) {
           setTrailMapResult({ error: data.error });
           return;
         }
-        if (data.phase === "loading_gpx") setTrailMapPhase("loading_gpx");
-        if (data.phase === "generating_map") setTrailMapPhase("generating_map");
-        if (data.phase === "generating_elevation")
-          setTrailMapPhase("generating_elevation");
-        if (data.phase === "done") setTrailMapPhase("done");
-        if (data.phase === "urls" && data.mapTrailUrl && data.mapElevationUrl) {
-          setTrailMapResult({
-            mapTrailUrl: data.mapTrailUrl,
-            mapElevationUrl: data.mapElevationUrl,
-          });
+        const label = data.name ?? data.slug ?? "";
+        if (
+          data.phase === "route_start" &&
+          data.index != null &&
+          data.total != null
+        ) {
+          setTrailMapProgress(
+            `Generuji mapu ${data.index}/${data.total}${label ? ` — ${label}` : ""}...`,
+          );
+        }
+        if (
+          data.phase === "generating_elevation" &&
+          data.index != null &&
+          data.total != null
+        ) {
+          setTrailMapProgress(
+            `Výškový profil ${data.index}/${data.total}${label ? ` — ${label}` : ""}...`,
+          );
+        }
+        if (
+          data.phase === "routing_duration" &&
+          data.index != null &&
+          data.total != null
+        ) {
+          setTrailMapProgress(
+            `Počítám dobu jízdy ${data.index}/${data.total}${label ? ` — ${label}` : ""}...`,
+          );
+        }
+        if (data.phase === "done") {
+          setTrailMapProgress("Hotovo");
+        }
+        if (data.phase === "urls" && Array.isArray(data.routes)) {
+          setTrailMapResult({ routes: data.routes });
         }
       });
     } catch (err) {
       console.error(err);
       setTrailMapResult({
-        error: "Nastala neočekávaná chyba při generování mapy.",
+        error: "Nastala neočekávaná chyba při generování map.",
       });
     } finally {
       setIsGeneratingTrailMap(false);
-      setTrailMapPhase(null);
     }
+  }
+
+  function updateGpxConfig(
+    filename: string,
+    patch: Partial<GpxConfigState>,
+  ) {
+    setGpxConfigs((prev) =>
+      prev.map((c) =>
+        c.filename === filename ? { ...c, ...patch } : c,
+      ),
+    );
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -322,6 +520,8 @@ export default function UploadPage() {
       setResult(data);
       setFiles(null);
       (event.target as HTMLFormElement).reset();
+      // Trigger re-fetch GPX seznamu — nově nahrané .gpx se objeví v sekci map.
+      setGpxReloadTick((t) => t + 1);
     } catch (error) {
       console.error(error);
       setResult({ error: "Nastala neočekávaná chyba." });
@@ -1117,44 +1317,79 @@ export default function UploadPage() {
           </div>
 
           {sectionType === "day" && (
-            <div className="space-y-2 border-t border-slate-800 pt-4">
+            <div className="space-y-3 border-t border-slate-800 pt-4">
               <p className="text-xs font-medium text-slate-300">
-                Mapa trasy (GPX)
+                Mapy tras (GPX)
               </p>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <select
-                  value={mapLayer}
-                  onChange={(e) => setMapLayer(e.target.value)}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/40 sm:w-48"
-                >
-                  {MAP_LAYER_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={handleGenerateTrailMap}
-                  disabled={!hasGpx || isGeneratingTrailMap}
-                  className="rounded-lg border border-emerald-600/60 bg-slate-900 px-4 py-2.5 text-sm font-medium text-emerald-200 shadow-sm transition hover:border-emerald-500 hover:text-emerald-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
-                >
-                  {isGeneratingTrailMap
-                    ? trailMapPhase === "loading_gpx"
-                      ? "Načítám GPX..."
-                      : trailMapPhase === "generating_map"
-                        ? "Generuji mapu..."
-                        : trailMapPhase === "generating_elevation"
-                          ? "Generuji výškový profil..."
-                          : "Hotovo"
-                    : "Generovat mapu"}
-                </button>
-              </div>
-              {!hasGpx && tripName && date && (
+              {gpxFiles.length === 0 && tripName && date && (
                 <p className="text-xs text-slate-500">
                   Pro tento den není v R2 žádný GPX soubor ve složce map.
                 </p>
               )}
+              {gpxConfigs.length > 0 && (
+                <div className="space-y-2">
+                  {gpxConfigs.map((cfg) => (
+                    <div
+                      key={cfg.filename}
+                      className="flex flex-col gap-2 rounded-lg border border-slate-800 bg-slate-950/40 p-2 sm:flex-row sm:items-center"
+                    >
+                      <p
+                        className="min-w-0 flex-1 truncate font-mono text-xs text-slate-300"
+                        title={cfg.filename}
+                      >
+                        {cfg.displayName}
+                      </p>
+                      <select
+                        value={cfg.routeType}
+                        onChange={(e) =>
+                          updateGpxConfig(cfg.filename, {
+                            routeType: e.target.value as RouteType,
+                          })
+                        }
+                        className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/40 sm:w-36"
+                      >
+                        {ROUTE_TYPE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={cfg.mapLayer}
+                        onChange={(e) =>
+                          updateGpxConfig(cfg.filename, {
+                            mapLayer: e.target.value,
+                          })
+                        }
+                        className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/40 sm:w-40"
+                      >
+                        {MAP_LAYER_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <button
+                  type="button"
+                  onClick={handleGenerateTrailMap}
+                  disabled={gpxConfigs.length === 0 || isGeneratingTrailMap}
+                  className="rounded-lg border border-emerald-600/60 bg-slate-900 px-4 py-2.5 text-sm font-medium text-emerald-200 shadow-sm transition hover:border-emerald-500 hover:text-emerald-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
+                >
+                  {isGeneratingTrailMap
+                    ? trailMapProgress ?? "Generuji..."
+                    : gpxConfigs.length > 1
+                      ? "Generovat mapy"
+                      : "Generovat mapu"}
+                </button>
+                {!isGeneratingTrailMap && trailMapProgress && (
+                  <p className="text-xs text-slate-400">{trailMapProgress}</p>
+                )}
+              </div>
             </div>
           )}
 
@@ -1354,7 +1589,73 @@ export default function UploadPage() {
               >
                 Vybrat hero fotku tripu
               </button>
+              <button
+                type="button"
+                onClick={() => handleShowCurrentHero("day")}
+                disabled={
+                  !tripName || !date || isLoadingCurrentHero === "day"
+                }
+                className="rounded-lg border border-slate-600/60 bg-slate-900 px-4 py-2.5 text-xs font-medium text-slate-200 shadow-sm transition hover:border-slate-500 hover:text-slate-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
+              >
+                {isLoadingCurrentHero === "day"
+                  ? "Načítám..."
+                  : "Zobraz aktuální hero dne"}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleShowCurrentHero("trip")}
+                disabled={!tripName || isLoadingCurrentHero === "trip"}
+                className="rounded-lg border border-slate-600/60 bg-slate-900 px-4 py-2.5 text-xs font-medium text-slate-200 shadow-sm transition hover:border-slate-500 hover:text-slate-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500"
+              >
+                {isLoadingCurrentHero === "trip"
+                  ? "Načítám..."
+                  : "Zobraz aktuální hero tripu"}
+              </button>
             </div>
+            {currentHeroError && (
+              <p className="text-xs text-amber-300">{currentHeroError}</p>
+            )}
+
+            {(currentDayHero || currentTripHero) && (
+              <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-xs">
+                {currentDayHero && (
+                  <div className="space-y-2">
+                    <p className="font-medium text-slate-200">
+                      Aktuální hero dne:{" "}
+                      <span className="text-sky-300">
+                        {currentDayHero.filename}
+                      </span>
+                    </p>
+                    {currentDayHero.heroUrl && tripName && date && (
+                      <HeroFocusEditor
+                        tripName={tripName.trim()}
+                        date={date.trim()}
+                        heroUrl={currentDayHero.heroUrl}
+                        heroFilename={currentDayHero.filename}
+                      />
+                    )}
+                  </div>
+                )}
+                {currentTripHero && (
+                  <div className="space-y-2 border-t border-slate-800 pt-3 mt-3">
+                    <p className="font-medium text-slate-200">
+                      Aktuální hero tripu:{" "}
+                      <span className="text-sky-300">
+                        {currentTripHero.filename}
+                      </span>
+                    </p>
+                    {currentTripHero.heroUrl && tripName && (
+                      <HeroFocusEditor
+                        tripName={tripName.trim()}
+                        date={null}
+                        heroUrl={currentTripHero.heroUrl}
+                        heroFilename={currentTripHero.filename}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {(dayHero || tripHero) && (
               <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-xs">
@@ -1524,29 +1825,40 @@ export default function UploadPage() {
           </div>
 
           {trailMapResult && (
-            <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm">
+            <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm">
               {trailMapResult.error && (
                 <p className="font-medium text-red-400">
                   {trailMapResult.error}
                 </p>
               )}
-              {trailMapResult.mapTrailUrl && trailMapResult.mapElevationUrl && (
-                <div className="space-y-3">
+              {trailMapResult.routes && trailMapResult.routes.length > 0 && (
+                <div className="space-y-4">
                   <p className="text-xs font-medium text-slate-300">
-                    Náhled mapy trasy a výškového profilu
+                    Náhled vygenerovaných map
                   </p>
-                  <div className="flex flex-col gap-3">
-                    <img
-                      src={trailMapResult.mapTrailUrl}
-                      alt="Mapa trasy"
-                      className="w-full rounded border border-slate-700 object-contain max-h-80"
-                    />
-                    <img
-                      src={trailMapResult.mapElevationUrl}
-                      alt="Výškový profil"
-                      className="w-full rounded border border-slate-700 object-contain max-h-80"
-                    />
-                  </div>
+                  {trailMapResult.routes.map((r) => (
+                    <div key={r.slug} className="space-y-2">
+                      <p className="text-xs text-slate-400">
+                        <span className="font-semibold text-slate-200">
+                          {r.name}
+                        </span>
+                        {" · "}
+                        {r.routeType === "car" ? "Auto" : "Pěší"}
+                      </p>
+                      <img
+                        src={r.mapTrailUrl}
+                        alt={`Mapa trasy — ${r.name}`}
+                        className="w-full rounded border border-slate-700 object-contain max-h-72"
+                      />
+                      {r.mapElevationUrl && (
+                        <img
+                          src={r.mapElevationUrl}
+                          alt={`Výškový profil — ${r.name}`}
+                          className="w-full rounded border border-slate-700 object-contain max-h-56"
+                        />
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

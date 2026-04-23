@@ -23,12 +23,20 @@ export async function GET(request: Request) {
     const client = createR2Client();
     const prefix = mapPrefix(tripName, date);
     const objects = await listObjects(client, prefix);
-    const hasGpx = objects.some((o) => {
-      const k = (o.Key ?? "").toLowerCase();
-      return k.endsWith(".gpx");
-    });
+    const files = objects
+      .map((o) => o.Key ?? "")
+      .filter((k) => k.toLowerCase().endsWith(".gpx"))
+      .map((k) => {
+        const filename = k.split("/").pop() ?? k;
+        const displayName = filename.replace(/\.gpx$/i, "");
+        return { filename, displayName };
+      })
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-    return NextResponse.json({ hasGpx }, { status: 200 });
+    return NextResponse.json(
+      { hasGpx: files.length > 0, files },
+      { status: 200 },
+    );
   } catch (error) {
     console.error("[CHECK_GPX]", error);
     return NextResponse.json(

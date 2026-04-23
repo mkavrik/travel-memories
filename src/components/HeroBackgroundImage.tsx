@@ -1,30 +1,15 @@
-"use client";
-
-import { useState, useCallback } from "react";
-
 type Props = {
   heroUrl: string | null;
   fallbackGradient: string;
+  /** Vertikální focus point 0-100 (procenta). 50 = střed. */
+  focusY?: number;
 };
 
 export function HeroBackgroundImage({
   heroUrl,
   fallbackGradient,
+  focusY = 50,
 }: Props) {
-  const [objectFit, setObjectFit] = useState<
-    "cover" | "contain"
-  >("cover");
-
-  const onLoad = useCallback(
-    (e: React.SyntheticEvent<HTMLImageElement>) => {
-      const img = e.currentTarget;
-      const w = img.naturalWidth;
-      const h = img.naturalHeight;
-      setObjectFit(h > w ? "contain" : "cover");
-    },
-    [],
-  );
-
   if (!heroUrl) {
     return (
       <div
@@ -34,16 +19,14 @@ export function HeroBackgroundImage({
     );
   }
 
+  const clampedY = Math.max(0, Math.min(100, focusY));
+
   return (
     <img
       src={heroUrl}
       alt=""
-      className="absolute inset-0 h-full w-full object-center"
-      style={{
-        objectFit,
-        objectPosition: "center center",
-      }}
-      onLoad={onLoad}
+      className="absolute inset-0 h-full w-full object-cover"
+      style={{ objectPosition: `50% ${clampedY}%` }}
     />
   );
 }
