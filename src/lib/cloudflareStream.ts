@@ -4,6 +4,15 @@
 
 const STREAM_API = "https://api.cloudflare.com/client/v4/accounts";
 
+/** Cloudflare account ID — accept both the R2-prefixed name (set in Vercel
+ *  by R2 bootstrap) and the bare CLOUDFLARE_ACCOUNT_ID. Same value. */
+function getAccountId(): string | undefined {
+  return (
+    process.env.CLOUDFLARE_ACCOUNT_ID ||
+    process.env.CLOUDFLARE_R2_ACCOUNT_ID
+  );
+}
+
 export type StreamVideoDetails = {
   width: number;
   height: number;
@@ -17,7 +26,7 @@ export type StreamVideoDetails = {
  * that points to a broken or purged Stream video.
  */
 export async function streamVideoExists(streamId: string): Promise<boolean> {
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const accountId = getAccountId();
   const token = process.env.CLOUDFLARE_STREAM_API_TOKEN;
   if (!accountId || !token) return false;
 
@@ -38,7 +47,7 @@ export async function streamVideoExists(streamId: string): Promise<boolean> {
 export async function getStreamVideoDetails(
   streamId: string,
 ): Promise<StreamVideoDetails | null> {
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const accountId = getAccountId();
   const token = process.env.CLOUDFLARE_STREAM_API_TOKEN;
   if (!accountId || !token) return null;
 
@@ -76,7 +85,7 @@ export async function uploadVideoToStreamFromUrl(
   sourceUrl: string,
   filename: string,
 ): Promise<string> {
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const accountId = getAccountId();
   const token = process.env.CLOUDFLARE_STREAM_API_TOKEN;
   if (!accountId || !token) {
     throw new Error(
