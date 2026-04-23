@@ -10,6 +10,31 @@ export type StreamVideoDetails = {
   isLandscape: boolean;
 };
 
+/**
+ * Check whether a Cloudflare Stream video with the given uid still exists.
+ * Returns true even if the video is still encoding — only returns false on
+ * 404 / deleted / never-existed. Used to detect stale _stream.json metadata
+ * that points to a broken or purged Stream video.
+ */
+export async function streamVideoExists(streamId: string): Promise<boolean> {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const token = process.env.CLOUDFLARE_STREAM_API_TOKEN;
+  if (!accountId || !token) return false;
+
+  const url = `${STREAM_API}/${accountId}/stream/${streamId}`;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { success?: boolean };
+    return data.success === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function getStreamVideoDetails(
   streamId: string,
 ): Promise<StreamVideoDetails | null> {

@@ -2,15 +2,18 @@ import { revalidatePath } from "next/cache";
 import {
   createR2Client,
   getSignedR2Url,
+  getTextObject,
   putTextObject,
   listObjects,
   listTripPrefixes,
   objectExists,
+  deleteObject,
 } from "@/lib/r2";
 import {
   uploadVideoToStreamFromUrl,
   streamMetaKey,
   isVideoKey,
+  streamVideoExists,
 } from "@/lib/cloudflareStream";
 import { invalidateCache } from "@/lib/cache";
 
@@ -38,6 +41,7 @@ export async function POST() {
         const tripNames = await listTripPrefixes(client);
 
         const tasks: VideoTask[] = [];
+        const daysWithVideos = new Set<string>();
 
         for (const tripName of tripNames) {
           const basePrefix = `trips/${tripName}/`;
@@ -63,8 +67,33 @@ export async function POST() {
               if (!filename || !isVideoKey(filename) || filename.endsWith("_stream.json"))
                 continue;
 
+              daysWithVideos.add(`${tripName}::${date}`);
+
               const metaKey = streamMetaKey(videoPrefix, filename);
-              if (await objectExists(client, metaKey)) continue;
+
+              // If metadata exists, verify it still points to a live
+              // Cloudflare Stream video. Stale entries are purged so they
+              // get re-uploaded in this run.
+              if (await objectExists(client, metaKey)) {
+                const raw = await getTextObject(client, metaKey);
+                let valid = false;
+                if (raw) {
+                  try {
+                    const meta = JSON.parse(raw) as { streamId?: string };
+                    if (meta.streamId) {
+                      valid = await streamVideoExists(meta.streamId);
+                    }
+                  } catch {
+                    /* treat as invalid */
+                  }
+                }
+                if (valid) continue;
+                console.log(
+                  "[SYNC_ALL_VIDEOS] Stale metadata, will re-upload:",
+                  key,
+                );
+                await deleteObject(client, metaKey);
+              }
 
               tasks.push({
                 tripName,
@@ -79,7 +108,6 @@ export async function POST() {
 
         const total = tasks.length;
         let uploaded = 0;
-        const touchedDays = new Set<string>();
 
         for (let i = 0; i < tasks.length; i++) {
           send({
@@ -105,7 +133,6 @@ export async function POST() {
               "application/json",
             );
             uploaded++;
-            touchedDays.add(`${task.tripName}::${task.date}`);
             console.log("[SYNC_ALL_VIDEOS] OK:", task.filename, "→", streamId);
           } catch (err) {
             console.error("[SYNC_ALL_VIDEOS] Copy failed:", task.filename, {
@@ -114,7 +141,9 @@ export async function POST() {
           }
         }
 
-        for (const key of Array.from(touchedDays)) {
+        // Invalidate cache for every trip/date that has any videos — handles
+        // the case where metadata existed but cache was seeded before it.
+        for (const key of Array.from(daysWithVideos)) {
           const [tripName, date] = key.split("::");
           try {
             await invalidateCache(tripName, date);

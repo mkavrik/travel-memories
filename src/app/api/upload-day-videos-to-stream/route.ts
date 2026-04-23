@@ -3,14 +3,17 @@ import { revalidatePath } from "next/cache";
 import {
   createR2Client,
   getSignedR2Url,
+  getTextObject,
   putTextObject,
   listObjects,
   objectExists,
+  deleteObject,
 } from "@/lib/r2";
 import {
   uploadVideoToStreamFromUrl,
   streamMetaKey,
   isVideoKey,
+  streamVideoExists,
 } from "@/lib/cloudflareStream";
 import { invalidateCache } from "@/lib/cache";
 
@@ -51,9 +54,32 @@ export async function POST(request: Request) {
 
     for (const filename of videoFiles) {
       const metaKey = streamMetaKey(videoPrefix, filename);
+
+      // If _stream.json already exists, verify the streamId still works on
+      // Cloudflare Stream. Stale metadata (from half-failed old uploads) is
+      // purged so we re-upload.
       if (await objectExists(client, metaKey)) {
-        skipped.push(filename);
-        continue;
+        const raw = await getTextObject(client, metaKey);
+        let validStreamId: string | null = null;
+        if (raw) {
+          try {
+            const meta = JSON.parse(raw) as { streamId?: string };
+            if (meta.streamId && (await streamVideoExists(meta.streamId))) {
+              validStreamId = meta.streamId;
+            }
+          } catch {
+            /* treat as invalid */
+          }
+        }
+        if (validStreamId) {
+          skipped.push(filename);
+          continue;
+        }
+        console.log(
+          "[UPLOAD_DAY_VIDEOS_TO_STREAM] Stale metadata, re-uploading:",
+          filename,
+        );
+        await deleteObject(client, metaKey);
       }
 
       try {
@@ -76,13 +102,13 @@ export async function POST(request: Request) {
       }
     }
 
-    if (uploaded.length > 0) {
-      try {
-        await invalidateCache(tripName, date);
-        revalidatePath(`/blog/${tripName}/${date}`);
-      } catch (e) {
-        console.warn("[UPLOAD_DAY_VIDEOS_TO_STREAM] Cache invalidation failed:", e);
-      }
+    // Always invalidate — user might be syncing because they noticed stale
+    // cached state, even if nothing new was uploaded.
+    try {
+      await invalidateCache(tripName, date);
+      revalidatePath(`/blog/${tripName}/${date}`);
+    } catch (e) {
+      console.warn("[UPLOAD_DAY_VIDEOS_TO_STREAM] Cache invalidation failed:", e);
     }
 
     return NextResponse.json(
