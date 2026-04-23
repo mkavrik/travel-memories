@@ -144,6 +144,10 @@ export default function UploadPage() {
     loaded: number;
     total: number;
     percent: number;
+    current?: number;
+    count?: number;
+    filename?: string;
+    phase?: "preparing" | "uploading" | "finalizing";
   } | null>(null);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -513,73 +517,179 @@ export default function UploadPage() {
       return;
     }
 
+    const fileArray = Array.from(selectedFiles);
+
     setIsSubmitting(true);
     setResult(null);
-    setUploadProgress({ loaded: 0, total: 0, percent: 0 });
+    setUploadProgress({
+      loaded: 0,
+      total: 0,
+      percent: 0,
+      phase: "preparing",
+    });
 
     try {
-      const formData = new FormData();
-      formData.append("tripName", tripName);
-      formData.append("sectionType", sectionType);
-      if (sectionType === "day" && date) {
-        formData.append("date", date);
-      }
-
-      Array.from(selectedFiles).forEach((file) => {
-        formData.append("files", file);
+      // 1. Ask server for presigned PUT URLs (tiny JSON — bypasses Vercel body limit).
+      const presignRes = await fetch("/api/upload-presign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tripName,
+          sectionType,
+          date: sectionType === "day" ? date : null,
+          files: fileArray.map((f) => ({
+            name: f.name,
+            contentType: f.type,
+          })),
+        }),
       });
+      const presignData = (await presignRes.json()) as {
+        presigned?: {
+          filename: string;
+          objectKey: string;
+          uploadUrl: string;
+          contentType: string;
+        }[];
+        skipped?: { filename: string; reason: string }[];
+        error?: string;
+      };
 
-      const data = await new Promise<UploadResult>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "/api/upload");
-
-        xhr.upload.addEventListener("progress", (ev) => {
-          if (ev.lengthComputable) {
-            setUploadProgress({
-              loaded: ev.loaded,
-              total: ev.total,
-              percent: Math.round((ev.loaded / ev.total) * 100),
-            });
-          }
+      if (!presignRes.ok || !presignData.presigned) {
+        setResult({
+          error: presignData.error || "Nepodařilo se připravit upload.",
+          skipped: presignData.skipped,
         });
-
-        xhr.upload.addEventListener("load", () => {
-          setUploadProgress((prev) =>
-            prev ? { ...prev, loaded: prev.total, percent: 100 } : prev,
-          );
-        });
-
-        xhr.addEventListener("load", () => {
-          let payload: UploadResult;
-          try {
-            payload = JSON.parse(xhr.responseText) as UploadResult;
-          } catch {
-            reject(new Error("Neplatná odpověď serveru."));
-            return;
-          }
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve(payload);
-          } else {
-            resolve({ ...payload, error: payload.error || "Upload selhal." });
-          }
-        });
-
-        xhr.addEventListener("error", () =>
-          reject(new Error("Síťová chyba při uploadu.")),
-        );
-        xhr.addEventListener("abort", () =>
-          reject(new Error("Upload přerušen.")),
-        );
-
-        xhr.send(formData);
-      });
-
-      if (data.error) {
-        setResult(data);
         return;
       }
 
-      setResult(data);
+      const presignMap = new Map(
+        presignData.presigned.map((p) => [p.filename, p]),
+      );
+      const serverSkipped = presignData.skipped ?? [];
+      const filesToUpload = fileArray.filter((f) => presignMap.has(f.name));
+      const totalBytes = filesToUpload.reduce((sum, f) => sum + f.size, 0);
+
+      // 2. PUT each file directly to R2 via presigned URL. Sequential to keep
+      //    progress math simple and avoid saturating mobile connections.
+      const uploaded: string[] = [];
+      const failed: { filename: string; reason: string }[] = [];
+      let completedBytes = 0;
+
+      for (let i = 0; i < filesToUpload.length; i += 1) {
+        const file = filesToUpload[i];
+        const info = presignMap.get(file.name);
+        if (!info) continue;
+
+        setUploadProgress({
+          loaded: completedBytes,
+          total: totalBytes,
+          percent:
+            totalBytes > 0
+              ? Math.round((completedBytes / totalBytes) * 100)
+              : 0,
+          current: i + 1,
+          count: filesToUpload.length,
+          filename: file.name,
+          phase: "uploading",
+        });
+
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open("PUT", info.uploadUrl);
+            xhr.setRequestHeader("Content-Type", info.contentType);
+
+            xhr.upload.addEventListener("progress", (ev) => {
+              if (ev.lengthComputable) {
+                const loaded = completedBytes + ev.loaded;
+                setUploadProgress({
+                  loaded,
+                  total: totalBytes,
+                  percent:
+                    totalBytes > 0
+                      ? Math.round((loaded / totalBytes) * 100)
+                      : 0,
+                  current: i + 1,
+                  count: filesToUpload.length,
+                  filename: file.name,
+                  phase: "uploading",
+                });
+              }
+            });
+
+            xhr.addEventListener("load", () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                resolve();
+              } else {
+                reject(
+                  new Error(
+                    `R2 odmítlo soubor (HTTP ${xhr.status}).` +
+                      (xhr.responseText
+                        ? ` ${xhr.responseText.slice(0, 120)}`
+                        : ""),
+                  ),
+                );
+              }
+            });
+            xhr.addEventListener("error", () =>
+              reject(new Error("Síťová chyba při uploadu do R2.")),
+            );
+            xhr.addEventListener("abort", () =>
+              reject(new Error("Upload přerušen.")),
+            );
+
+            xhr.send(file);
+          });
+
+          completedBytes += file.size;
+          uploaded.push(info.objectKey);
+        } catch (err) {
+          failed.push({
+            filename: file.name,
+            reason:
+              err instanceof Error ? err.message : "Upload selhal.",
+          });
+        }
+      }
+
+      if (uploaded.length === 0) {
+        setResult({
+          error: "Žádný soubor nebyl nahrán.",
+          skipped: [...serverSkipped, ...failed],
+        });
+        return;
+      }
+
+      // 3. Finalize — cache invalidation (best-effort; files are already in R2).
+      setUploadProgress({
+        loaded: totalBytes,
+        total: totalBytes,
+        percent: 100,
+        current: filesToUpload.length,
+        count: filesToUpload.length,
+        phase: "finalizing",
+      });
+
+      try {
+        await fetch("/api/upload-finalize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tripName,
+            sectionType,
+            date: sectionType === "day" ? date : null,
+            uploaded,
+          }),
+        });
+      } catch (e) {
+        console.warn("[UPLOAD] Finalize failed (files are in R2):", e);
+      }
+
+      setResult({
+        message: "Upload dokončen.",
+        uploaded,
+        skipped: [...serverSkipped, ...failed],
+      });
       setFiles(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -1389,13 +1499,35 @@ export default function UploadPage() {
 
           {uploadProgress && (
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs text-slate-300">
-                <span>
-                  {uploadProgress.percent < 100
-                    ? "Nahrávám do R2…"
-                    : "Dokončuji…"}
+              <div className="flex items-center justify-between gap-2 text-xs text-slate-300">
+                <span className="min-w-0 truncate">
+                  {uploadProgress.phase === "preparing" &&
+                    "Připravuji upload…"}
+                  {uploadProgress.phase === "uploading" && (
+                    <>
+                      Nahrávám do R2
+                      {uploadProgress.count ? (
+                        <>
+                          {" "}
+                          <span className="text-slate-400">
+                            ({uploadProgress.current}/{uploadProgress.count})
+                          </span>
+                        </>
+                      ) : null}
+                      {uploadProgress.filename ? (
+                        <>
+                          :{" "}
+                          <span className="text-slate-400">
+                            {uploadProgress.filename}
+                          </span>
+                        </>
+                      ) : null}
+                    </>
+                  )}
+                  {uploadProgress.phase === "finalizing" && "Dokončuji…"}
+                  {!uploadProgress.phase && "Nahrávám…"}
                 </span>
-                <span className="font-mono text-slate-400">
+                <span className="shrink-0 font-mono text-slate-400">
                   {formatBytes(uploadProgress.loaded)}
                   {uploadProgress.total > 0 && (
                     <> / {formatBytes(uploadProgress.total)}</>

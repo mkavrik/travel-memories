@@ -65,6 +65,25 @@ export async function getSignedR2Url(
   return getSignedUrl(client, command, { expiresIn: expiresInSeconds });
 }
 
+export async function getSignedPutUrl(
+  client: S3Client,
+  key: string,
+  contentType: string,
+  expiresInSeconds = 3600,
+): Promise<string> {
+  if (!bucketName) {
+    throw new Error("R2 bucket name is not configured.");
+  }
+
+  const command = new PutObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    ContentType: contentType,
+  });
+
+  return getSignedUrl(client, command, { expiresIn: expiresInSeconds });
+}
+
 export async function listTripPrefixes(client: S3Client): Promise<string[]> {
   if (!bucketName) {
     throw new Error("R2 bucket name is not configured.");
