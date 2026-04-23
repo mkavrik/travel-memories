@@ -7,6 +7,7 @@ import {
   createR2Client,
   displayCacheKey,
   getSignedR2Url,
+  PHOTO_CACHE_CONTROL,
   getTextObject,
   isOriginalImage,
   listObjects,
@@ -85,6 +86,7 @@ async function loadTripFromR2(tripName: string): Promise<CachedTripData> {
               client,
               summaryDisplayKey,
               SIGNED_URL_EXPIRY_SEC,
+              { responseCacheControl: PHOTO_CACHE_CONTROL },
             );
           } else {
             for (const d of sortedDates) {
@@ -94,6 +96,7 @@ async function loadTripFromR2(tripName: string): Promise<CachedTripData> {
                   client,
                   dayDisplayKey,
                   SIGNED_URL_EXPIRY_SEC,
+                  { responseCacheControl: PHOTO_CACHE_CONTROL },
                 );
                 break;
               }
@@ -111,7 +114,9 @@ async function loadTripFromR2(tripName: string): Promise<CachedTripData> {
     const filename = key.split("/").pop() ?? "";
     const dKey = displayCacheKey(prefix, filename);
     if (await objectExists(client, dKey)) {
-      coverUrl = await getSignedR2Url(client, dKey, SIGNED_URL_EXPIRY_SEC);
+      coverUrl = await getSignedR2Url(client, dKey, SIGNED_URL_EXPIRY_SEC, {
+        responseCacheControl: PHOTO_CACHE_CONTROL,
+      });
     }
   }
   if (!coverUrl) {
@@ -125,6 +130,7 @@ async function loadTripFromR2(tripName: string): Promise<CachedTripData> {
         client,
         firstDisplay.Key,
         SIGNED_URL_EXPIRY_SEC,
+        { responseCacheControl: PHOTO_CACHE_CONTROL },
       );
     }
   }
@@ -271,6 +277,7 @@ async function loadDayFromR2(
               client,
               dKey,
               SIGNED_URL_EXPIRY_SEC,
+              { responseCacheControl: PHOTO_CACHE_CONTROL },
             );
           }
         }
@@ -285,7 +292,9 @@ async function loadDayFromR2(
     const filename = key.split("/").pop() ?? "";
     const dKey = displayCacheKey(photosPrefix, filename);
     if (await objectExists(client, dKey)) {
-      coverUrl = await getSignedR2Url(client, dKey, SIGNED_URL_EXPIRY_SEC);
+      coverUrl = await getSignedR2Url(client, dKey, SIGNED_URL_EXPIRY_SEC, {
+        responseCacheControl: PHOTO_CACHE_CONTROL,
+      });
     }
   }
 
@@ -321,6 +330,7 @@ async function loadDayFromR2(
       client,
       trailKey,
       SIGNED_URL_EXPIRY_SEC,
+      { responseCacheControl: PHOTO_CACHE_CONTROL },
     );
 
     let mapElevationUrl: string | null = null;
@@ -331,6 +341,7 @@ async function loadDayFromR2(
           client,
           elevationKey,
           SIGNED_URL_EXPIRY_SEC,
+          { responseCacheControl: PHOTO_CACHE_CONTROL },
         );
       }
     }
@@ -564,13 +575,19 @@ async function loadPhotoUrlsFromR2(
       client,
       displayKey,
       SIGNED_URL_EXPIRY_SEC,
+      { responseCacheControl: PHOTO_CACHE_CONTROL },
     );
     const filename = displayKey.split("/").pop() ?? "";
     const base = filename.replace(/_display\.jpg$/i, "");
     const thumbKey = thumbCacheKey(photosPrefix, base + ".jpg");
     let thumbUrl = url;
     if (await objectExists(client, thumbKey)) {
-      thumbUrl = await getSignedR2Url(client, thumbKey, SIGNED_URL_EXPIRY_SEC);
+      thumbUrl = await getSignedR2Url(
+        client,
+        thumbKey,
+        SIGNED_URL_EXPIRY_SEC,
+        { responseCacheControl: PHOTO_CACHE_CONTROL },
+      );
     }
     result.push({ key: displayKey, url, displayUrl: url, thumbUrl });
   }

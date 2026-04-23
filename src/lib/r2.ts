@@ -52,6 +52,7 @@ export async function getSignedR2Url(
   client: S3Client,
   key: string,
   expiresInSeconds = 3600,
+  options?: { responseCacheControl?: string },
 ): Promise<string> {
   if (!bucketName) {
     throw new Error("R2 bucket name is not configured.");
@@ -60,10 +61,16 @@ export async function getSignedR2Url(
   const command = new GetObjectCommand({
     Bucket: bucketName,
     Key: key,
+    ResponseCacheControl: options?.responseCacheControl,
   });
 
   return getSignedUrl(client, command, { expiresIn: expiresInSeconds });
 }
+
+/** Cache-Control for photo/hero display URLs. The signed URL is stable for
+ *  the lifetime of the Supabase cache entry (7 days) and the underlying file
+ *  doesn't change; new uploads invalidate the cache and produce a new URL. */
+export const PHOTO_CACHE_CONTROL = "public, max-age=604800, immutable";
 
 export async function getSignedPutUrl(
   client: S3Client,
