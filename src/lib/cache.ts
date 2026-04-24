@@ -18,8 +18,20 @@ import { createSupabaseClient } from "@/lib/supabase";
 import type { TrailStatsFile } from "@/lib/trailMap";
 import { getStreamVideoDetails } from "@/lib/cloudflareStream";
 
+/**
+ * Supabase cache je považovaná za platnou pokud řádek existuje —
+ * žádná TTL-based eviction při čtení. Freshness drží:
+ *   1) invalidateCache při zápisu (upload, hero, blog edit…)
+ *   2) denní Vercel cron /api/warm-cache, který force-refreshuje
+ *      všechny řádky (viz vercel.json)
+ *
+ * Pozor: podepsané R2 URL v cache mají max 7denní platnost (S3 SigV4
+ * limit). Pokud by cron selhával > 7 dní, URL by expirovaly a fotky
+ * začnou vracet 403. CACHE_TTL_DAYS nechává stará (pre-cron) data
+ * nastavit expires_at pro backwards compat, ale čte se bez filtru.
+ */
 const CACHE_TTL_DAYS = 7;
-const SIGNED_URL_EXPIRY_SEC = 604800; // 7 days
+const SIGNED_URL_EXPIRY_SEC = 604800; // 7 days (S3 SigV4 max)
 
 function thumbCacheKey(photosPrefix: string, filename: string): string {
   const base = filename.replace(/\.[^.]+$/, "");
@@ -149,8 +161,6 @@ export async function getCachedTripData(
   if (!supabase) {
     console.log(`Cache: Supabase client is null (NEXT_PUBLIC_SUPABASE_URL/ANON_KEY?), skipping DB for ${key}`);
   }
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - CACHE_TTL_DAYS);
 
   if (supabase) {
     try {
@@ -164,7 +174,7 @@ export async function getCachedTripData(
       if (selectError) {
         console.error(`Cache Supabase SELECT error [${key}]:`, selectError);
       }
-      if (row && new Date(row.updated_at) >= cutoff) {
+      if (row) {
         console.log(`Cache HIT: ${key} (Supabase ${ms} ms)`);
         return {
           coverUrl: row.cover_url ?? null,
@@ -405,8 +415,6 @@ export async function getCachedDayData(
 ): Promise<CachedDayData | null> {
   const key = `trip/${tripName}/${date}`;
   const supabase = createSupabaseClient();
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - CACHE_TTL_DAYS);
 
   if (supabase) {
     try {
@@ -421,7 +429,7 @@ export async function getCachedDayData(
       if (selectError) {
         console.error(`Cache Supabase SELECT error [${key}]:`, selectError);
       }
-      if (row && new Date(row.updated_at) >= cutoff) {
+      if (row) {
         console.log(`Cache HIT: ${key} (Supabase ${ms} ms)`);
         return {
           coverUrl: row.cover_url ?? null,
@@ -513,23 +521,19 @@ export async function getCachedTripDays(
 ): Promise<{ date: string; coverUrl: string | null }[]> {
   const key = `trip/${tripName}/days`;
   const supabase = createSupabaseClient();
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - CACHE_TTL_DAYS);
 
   const sortedDates = await getTripDays(tripName);
 
-  // Cover URLs — přednostně z Supabase (fresh), jinak přes getCachedDayData (R2).
+  // Cover URLs — přednostně z Supabase, jinak přes getCachedDayData (R2).
   const freshCovers = new Map<string, string | null>();
   if (supabase) {
     try {
       const { data: rows } = await supabase
         .from("days_cache")
-        .select("date, cover_url, updated_at")
+        .select("date, cover_url")
         .eq("trip_name", tripName);
       for (const r of rows ?? []) {
-        if (new Date(r.updated_at) >= cutoff) {
-          freshCovers.set(r.date, r.cover_url ?? null);
-        }
+        freshCovers.set(r.date, r.cover_url ?? null);
       }
     } catch (e) {
       console.error(`Cache Supabase exception [${key}] (select):`, e);
@@ -614,17 +618,15 @@ export async function getCachedPhotoUrls(
 ): Promise<CachedPhotoUrl[]> {
   const key = `trip/${tripName}/photos/${date}`;
   const supabase = createSupabaseClient();
-  const now = new Date();
 
   if (supabase) {
     try {
       const t0 = Date.now();
       const { data: rows, error: selectError } = await supabase
         .from("photo_urls_cache")
-        .select("filename, display_url, thumb_url, expires_at")
+        .select("filename, display_url, thumb_url")
         .eq("trip_name", tripName)
-        .eq("date", date)
-        .gt("expires_at", now.toISOString());
+        .eq("date", date);
       const ms = Date.now() - t0;
       if (selectError) {
         console.error(`Cache Supabase SELECT error [${key}]:`, selectError);

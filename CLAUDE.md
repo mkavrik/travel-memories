@@ -91,9 +91,12 @@ ZPRACOVÁNÍ (tlačítka na /upload stránce)
   └─────────────────────────────────────────────┘
         ↓
 SUPABASE (caching)
-  Trips, dny, fotky, blog posty cachované po dobu 7 dní
-  Automatická invalidace při uploadu/generování obsahu
-  Cache warming přes tlačítko "Zahřát cache" na /upload
+  Trips, dny, fotky, blog posty cachované bez TTL — freshness drží
+  invalidace při zápisu (upload, hero, blog edit) + Vercel cron
+  /api/warm-cache 1× denně (04:00 UTC), který smaže řádky a znovu
+  naplní s čerstvými podepsanými R2 URL. Max 7 dní je S3 SigV4 cap
+  pro podepsané URL — bez cronu by URL po týdnu expirovaly (403).
+  Manuální warming přes tlačítko "Zahřát cache" na /upload
   Presigned GET URL nesou response-cache-control
   (public, max-age=604800, immutable) → prohlížeč fotky
   reálně cachuje mezi návštěvami
@@ -507,6 +510,8 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - [x] Sync videí vždy invaliduje Supabase cache + `revalidatePath` (nezávisle na tom, jestli se něco nového nahrálo)
 - [x] `response-cache-control: public, max-age=604800, immutable` na všech podepsaných image URL (fotky, hero, mapy) — prohlížeč reálně cachuje mezi návštěvami
 - [x] Stream kód akceptuje `CLOUDFLARE_ACCOUNT_ID` i `CLOUDFLARE_R2_ACCOUNT_ID` (stejná hodnota napříč službami, žádná duplikace v env vars)
+- [x] Zrušená TTL-based eviction Supabase cache — čte se bez kontroly stáří, freshness drží invalidace + Vercel cron (`vercel.json`) 1× denně na `/api/warm-cache`, který force-refreshuje všechny řádky. `warm-cache` teď maže řádky před repopulací (jinak by to byl no-op HIT) a přijímá GET (Vercel cron posílá GET).
+- [x] Day page nepotřebuje cover URL pro sousední dny — nová lehká `getTripDays()` vrací jen seznam dat z R2 listu. Předchozí `getCachedTripDays` při cold cache spouštěla plnou `loadDayFromR2` per každý den tripu sekvenčně (Norsko: 21 s, 100 API volání). Trip page stále používá `getCachedTripDays` ale nyní paralelizovaně přes `Promise.all`.
 - [x] Progress bar při výběru hero fotky (NDJSON streaming v `/api/select-hero-photo`) — listing → příprava náhledů N/M → done
 - [x] Odstranění Claude vision hero pickeru — žádná AI evaluace ani auto-výběr fotek. `/api/select-hero-photo` jen vrací kandidáty pro grid, manuální klik na náhled uloží přes `/api/set-hero-photo`. Smazán `heroPhotoAgent.ts`, `_ai.jpg` cache verze (konverze teď dělá jen thumb + display), odstraněno `reason` z hero_photo.json. `set-hero-photo` nově invaliduje cache + `revalidatePath` (předtím chybělo)
 

@@ -1,3 +1,4 @@
+import { createSupabaseClient } from "@/lib/supabase";
 import {
   getCachedDayData,
   getCachedPhotoUrls,
@@ -8,71 +9,94 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 function ndjsonLine(obj: { message?: string; [key: string]: unknown }): string {
   return JSON.stringify(obj) + "\n";
 }
 
-export async function POST() {
+/**
+ * Force-refresh Supabase cache pro všechny tripy. Smaže řádky,
+ * pak nad nimi zavolá getCachedXxx, které je znovu naplní s čerstvými
+ * podepsanými R2 URL.
+ *
+ * Volá se:
+ *   - ručně z /upload (POST)
+ *   - Vercel cron 1× denně (GET, viz vercel.json)
+ */
+async function warmCache(): Promise<ReadableStream> {
   const encoder = new TextEncoder();
-  const stream = new ReadableStream({
+  return new ReadableStream({
     async start(controller) {
+      const send = (obj: { message?: string; [key: string]: unknown }) =>
+        controller.enqueue(encoder.encode(ndjsonLine(obj)));
       try {
+        const supabase = createSupabaseClient();
         const tripNames = await getTripNames();
         let tripCount = 0;
         let dayCount = 0;
 
         for (const tripName of tripNames) {
-          controller.enqueue(
-            encoder.encode(
-              ndjsonLine({
-                message: `Warming cache: [${tripName}]...`,
-              }),
-            ),
-          );
+          send({ message: `Warming: [${tripName}]…` });
+
+          // Force refresh trip-level cache.
+          if (supabase) {
+            await supabase.from("trips_cache").delete().eq("trip_name", tripName);
+          }
           await getCachedTripData(tripName);
           tripCount += 1;
 
           const days = await getCachedTripDays(tripName);
           for (const { date } of days) {
-            controller.enqueue(
-              encoder.encode(
-                ndjsonLine({
-                  message: `Warming cache: [${tripName}/${date}]...`,
-                }),
-              ),
-            );
+            send({ message: `Warming: [${tripName}/${date}]…` });
+
+            // Force refresh day-level cache (days_cache + photo_urls_cache).
+            if (supabase) {
+              await supabase
+                .from("days_cache")
+                .delete()
+                .eq("trip_name", tripName)
+                .eq("date", date);
+              await supabase
+                .from("photo_urls_cache")
+                .delete()
+                .eq("trip_name", tripName)
+                .eq("date", date);
+            }
             await getCachedDayData(tripName, date);
             await getCachedPhotoUrls(tripName, date);
             dayCount += 1;
           }
         }
 
-        controller.enqueue(
-          encoder.encode(
-            ndjsonLine({
-              message: `Cache warming dokončen: ${tripCount} tripů, ${dayCount} dní`,
-            }),
-          ),
-        );
+        send({
+          message: `Cache warming hotovo: ${tripCount} tripů, ${dayCount} dní`,
+        });
       } catch (e) {
-        controller.enqueue(
-          encoder.encode(
-            ndjsonLine({
-              error: String(e instanceof Error ? e.message : e),
-            }),
-          ),
-        );
+        send({
+          error: String(e instanceof Error ? e.message : e),
+        });
       } finally {
         controller.close();
       }
     },
   });
+}
 
+function streamResponse(stream: ReadableStream): Response {
   return new Response(stream, {
     headers: {
       "Content-Type": "application/x-ndjson",
       "Cache-Control": "no-store",
     },
   });
+}
+
+export async function POST() {
+  return streamResponse(await warmCache());
+}
+
+// Vercel Cron posílá GET. Stejné chování jako POST.
+export async function GET() {
+  return streamResponse(await warmCache());
 }
