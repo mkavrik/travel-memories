@@ -519,4 +519,4 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 ---
 
 *Dokument vytvořen na základě úvodní architektury diskutované s Claude (březen 2026).*
-*Poslední aktualizace: 23. dubna 2026 — direct-to-R2 upload přes presigned PUT URL, Cloudflare Stream přes `/copy`, progress bar u uploadu i hero pickeru, mobile upload fix, browser caching fotek přes `response-cache-control`, odstranění Claude vision hero pickeru (čistě manuální výběr z gridu).*
+*Poslední aktualizace: 24. dubna 2026 — řazení tripů na /blog podle data sestupně, lazy loading fotek/videí/map, day page jen lehký `getTripDays()` místo `getCachedTripDays` (Norsko 21 s → 1 s), zrušená TTL-based eviction Supabase cache + denní Vercel cron force-refresh na `/api/warm-cache` (`vercel.json`), server-side EXIF capture time v `_meta.json` + sloupec `photo_urls_cache.captured_at` (migrace 004) → správné řazení galerie bez klient-side exifr fetchů.*
