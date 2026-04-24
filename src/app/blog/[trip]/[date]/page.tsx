@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import {
   getCachedDayData,
   getCachedPhotoUrls,
-  getCachedTripDays,
+  getTripDays,
 } from "@/lib/cache";
 import { DayGallery } from "@/components/DayGallery";
 import { HeroBackgroundImage } from "@/components/HeroBackgroundImage";
@@ -44,10 +44,10 @@ async function getDayData(tripParam: string, dateParam: string) {
   const date = decodeURIComponent(dateParam);
 
   const t0 = Date.now();
-  const [dayData, photoUrls, daysList] = await Promise.all([
+  const [dayData, photoUrls, dates] = await Promise.all([
     getCachedDayData(tripName, date),
     getCachedPhotoUrls(tripName, date),
-    getCachedTripDays(tripName),
+    getTripDays(tripName),
   ]);
   const elapsed = Date.now() - t0;
 
@@ -57,14 +57,13 @@ async function getDayData(tripParam: string, dateParam: string) {
       `videos=${dayData?.streamVideos.length ?? 0}, ` +
       `routes=${dayData?.routes.length ?? 0}, ` +
       `blogLen=${dayData?.blogPost?.length ?? 0}, ` +
-      `daysInTrip=${daysList.length}`,
+      `daysInTrip=${dates.length}`,
   );
 
   if (!dayData) {
     notFound();
   }
 
-  const dates = daysList.map((d) => d.date);
   const currentIdx = dates.indexOf(date);
   const prevDate = currentIdx > 0 ? dates[currentIdx - 1] : null;
   const nextDate =

@@ -476,19 +476,12 @@ export async function getCachedDayData(
 }
 
 /**
- * Seznam dnů tripu. Source of truth pro existenci dne je R2 (vždy listujeme).
- * Supabase použijeme pouze jako cache pro cover_url — díra v Supabase
- * nesmí skrýt den, který v R2 existuje.
+ * Lightweight: jen seznam dat (YYYY-MM-DD) tripu, source of truth je R2 list.
+ * Žádné cover URLs → žádná rekonstrukce days_cache. Použij tam, kde
+ * potřebuješ prev/next navigaci a nezobrazuješ per-day cover.
  */
-export async function getCachedTripDays(
-  tripName: string,
-): Promise<{ date: string; coverUrl: string | null }[]> {
+export async function getTripDays(tripName: string): Promise<string[]> {
   const key = `trip/${tripName}/days`;
-  const supabase = createSupabaseClient();
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - CACHE_TTL_DAYS);
-
-  // 1) Ground truth — dny z R2.
   const tR2 = Date.now();
   const client = createR2Client();
   const basePrefix = `trips/${tripName}/`;
@@ -504,8 +497,28 @@ export async function getCachedTripDays(
   console.log(
     `${key}: R2 list ${Date.now() - tR2} ms, ${sortedDates.length} days`,
   );
+  return sortedDates;
+}
 
-  // 2) Cover URLs — přednostně z Supabase (fresh), jinak přes getCachedDayData (R2).
+/**
+ * Seznam dnů tripu včetně cover URL pro každý den. Používá se na trip page
+ * (sidebar ukazuje thumbnail dne). Pro day page použij `getTripDays` —
+ * tahle funkce na cold cache spouští plnou `loadDayFromR2` per den.
+ *
+ * Source of truth pro existenci dne je R2. Supabase použijeme pouze jako
+ * cache pro cover_url — díra v Supabase nesmí skrýt den, který v R2 existuje.
+ */
+export async function getCachedTripDays(
+  tripName: string,
+): Promise<{ date: string; coverUrl: string | null }[]> {
+  const key = `trip/${tripName}/days`;
+  const supabase = createSupabaseClient();
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - CACHE_TTL_DAYS);
+
+  const sortedDates = await getTripDays(tripName);
+
+  // Cover URLs — přednostně z Supabase (fresh), jinak přes getCachedDayData (R2).
   const freshCovers = new Map<string, string | null>();
   if (supabase) {
     try {
@@ -523,16 +536,17 @@ export async function getCachedTripDays(
     }
   }
 
-  const days: { date: string; coverUrl: string | null }[] = [];
-  for (const date of sortedDates) {
-    if (freshCovers.has(date)) {
-      days.push({ date, coverUrl: freshCovers.get(date) ?? null });
-      continue;
-    }
-    // Chybí v Supabase (nebo je stale) — načti z R2 a rovnou upsertni.
-    const dayData = await getCachedDayData(tripName, date);
-    days.push({ date, coverUrl: dayData?.coverUrl ?? null });
-  }
+  // Paralelně načteme chybějící covers — sériové loadDayFromR2 nad N dny
+  // dřív dělalo 20+ s pro trip s 6 dny a cold cache.
+  const days = await Promise.all(
+    sortedDates.map(async (date) => {
+      if (freshCovers.has(date)) {
+        return { date, coverUrl: freshCovers.get(date) ?? null };
+      }
+      const dayData = await getCachedDayData(tripName, date);
+      return { date, coverUrl: dayData?.coverUrl ?? null };
+    }),
+  );
   return days;
 }
 
