@@ -2,11 +2,14 @@ import type { S3Client } from "@aws-sdk/client-s3";
 import {
   getObjectBuffer,
   putObjectBuffer,
+  putTextObject,
+  getTextObject,
   objectExists,
   getSignedR2Url,
 } from "@/lib/r2";
 import heicConvert from "heic-convert";
 import sharp from "sharp";
+import exifr from "exifr";
 
 /** Přípony cache souborů v /cache/ */
 export const CACHE_SUFFIX_THUMB = "thumb";
@@ -56,15 +59,79 @@ function isHeic(key: string): boolean {
 }
 
 /**
- * Cache hit: existence _thumb.jpg je proxy pro všechny tři verze.
+ * Cache hit: existence _thumb.jpg je proxy pro všechny dvě verze
+ * (thumb + display). Meta JSON se řeší zvlášť — existuje/neexistuje
+ * nezávisle, protože jsme ho začali psát později a je potřeba ho
+ * dogenerovat i pro starší fotky.
  */
 function thumbCacheKey(originalKey: string): string {
   return buildCacheKey(originalKey, CACHE_SUFFIX_THUMB);
 }
 
+function metaKey(originalKey: string): string {
+  const lastSlash = originalKey.lastIndexOf("/");
+  if (lastSlash === -1) return originalKey;
+  const dir = originalKey.slice(0, lastSlash);
+  const filename = originalKey.slice(lastSlash + 1);
+  const dot = filename.lastIndexOf(".");
+  const base = dot === -1 ? filename : filename.slice(0, dot);
+  return `${dir}/cache/${base}_meta.json`;
+}
+
+/** Extrahuj DateTimeOriginal z original EXIF. Tolerant k chybám — pro
+ *  fotky bez EXIF nebo neparsovatelné data vrátí null. exifr umí HEIC
+ *  i JPEG a čte jen hlavičku, takže je to levné. */
+async function readCapturedAt(buffer: Buffer): Promise<Date | null> {
+  try {
+    const parsed = await exifr.parse(buffer, {
+      pick: ["DateTimeOriginal", "CreateDate", "ModifyDate"],
+    });
+    const d =
+      parsed?.DateTimeOriginal ?? parsed?.CreateDate ?? parsed?.ModifyDate;
+    return d instanceof Date && !Number.isNaN(d.getTime()) ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeMeta(
+  client: S3Client,
+  originalKey: string,
+  capturedAt: Date | null,
+): Promise<void> {
+  await putTextObject(
+    client,
+    metaKey(originalKey),
+    JSON.stringify({ capturedAt: capturedAt ? capturedAt.toISOString() : null }),
+    "application/json",
+  );
+}
+
+/** Vrátí captured_at z `{basename}_meta.json`, pokud soubor existuje.
+ *  Null když meta neexistuje nebo je neparsovatelná. */
+export async function readMetaCapturedAt(
+  client: S3Client,
+  originalKey: string,
+): Promise<Date | null> {
+  const raw = await getTextObject(client, metaKey(originalKey));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { capturedAt?: string | null };
+    if (!parsed.capturedAt) return null;
+    const d = new Date(parsed.capturedAt);
+    return Number.isNaN(d.getTime()) ? null : d;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Při konverzi vždy vytvoř všechny tři verze najednou.
- * HEIC se dekóduje jen jednou, pak resize na tři velikosti.
+ * Při konverzi vytvoř thumb + display verze a meta JSON s EXIF
+ * capture time. Idempotentní:
+ *   - thumb existuje + meta existuje → no-op
+ *   - thumb existuje + meta chybí → dogeneruj jen meta (původní fotka
+ *     bez EXIF sidecar — backfill pro staré dny)
+ *   - thumb chybí → plná konverze + meta
  * Neprováděj konverzi na souborech z /cache/ (pouze originály z photos/).
  */
 export async function ensureAllCaches(
@@ -74,12 +141,22 @@ export async function ensureAllCaches(
   if (originalKey.includes("/cache/")) return;
 
   const thumbKey = thumbCacheKey(originalKey);
-  if (await objectExists(client, thumbKey)) {
-    return;
-  }
+  const metaKeyPath = metaKey(originalKey);
+  const thumbExists = await objectExists(client, thumbKey);
+  const metaExists = await objectExists(client, metaKeyPath);
+
+  if (thumbExists && metaExists) return;
 
   const buffer = await getObjectBuffer(client, originalKey);
   if (!buffer) throw new Error(`Failed to load image: ${originalKey}`);
+
+  const capturedAt = await readCapturedAt(buffer);
+
+  // Backfill: pokud thumb existuje, jen doplň meta sidecar.
+  if (thumbExists && !metaExists) {
+    await writeMeta(client, originalKey, capturedAt);
+    return;
+  }
 
   let decodedBuffer: Buffer;
   if (isHeic(originalKey)) {
@@ -96,8 +173,8 @@ export async function ensureAllCaches(
   const pipeline = sharp(decodedBuffer);
   const suffixes = [CACHE_SUFFIX_THUMB, CACHE_SUFFIX_DISPLAY] as const;
 
-  await Promise.all(
-    suffixes.map(async (suffix) => {
+  await Promise.all([
+    ...suffixes.map(async (suffix) => {
       const spec = SPECS[suffix];
       const cacheKey = buildCacheKey(originalKey, suffix);
       const out = await pipeline
@@ -107,7 +184,8 @@ export async function ensureAllCaches(
         .toBuffer();
       await putObjectBuffer(client, cacheKey, out, "image/jpeg");
     }),
-  );
+    writeMeta(client, originalKey, capturedAt),
+  ]);
 }
 
 async function ensureDisplayCache(

@@ -17,6 +17,7 @@ import {
 import { createSupabaseClient } from "@/lib/supabase";
 import type { TrailStatsFile } from "@/lib/trailMap";
 import { getStreamVideoDetails } from "@/lib/cloudflareStream";
+import { readMetaCapturedAt } from "@/lib/photoCache";
 
 /**
  * Supabase cache je považovaná za platnou pokud řádek existuje —
@@ -560,12 +561,22 @@ export type CachedPhotoUrl = {
   key: string;
   url: string;
   displayUrl: string;
+  /** ISO timestamp EXIF DateTimeOriginal, pokud je známo; jinak null. */
+  capturedAt: string | null;
 };
 
 async function loadPhotoUrlsFromR2(
   tripName: string,
   date: string,
-): Promise<{ key: string; url: string; displayUrl: string; thumbUrl: string }[]> {
+): Promise<
+  {
+    key: string;
+    url: string;
+    displayUrl: string;
+    thumbUrl: string;
+    capturedAt: string | null;
+  }[]
+> {
   const client = createR2Client();
   const isSummary = date === "summary";
   const basePrefix = isSummary
@@ -587,7 +598,13 @@ async function loadPhotoUrlsFromR2(
     if (!byBasename.has(base)) byBasename.set(base, key);
   }
   const keys = Array.from(byBasename.values());
-  const result: { key: string; url: string; displayUrl: string; thumbUrl: string }[] = [];
+  const result: {
+    key: string;
+    url: string;
+    displayUrl: string;
+    thumbUrl: string;
+    capturedAt: string | null;
+  }[] = [];
   for (const displayKey of keys) {
     const url = await getSignedR2Url(
       client,
@@ -607,7 +624,29 @@ async function loadPhotoUrlsFromR2(
         { responseCacheControl: PHOTO_CACHE_CONTROL },
       );
     }
-    result.push({ key: displayKey, url, displayUrl: url, thumbUrl });
+
+    // Meta sidecar má stejný basename jako thumb, ale s _meta.json —
+    // readMetaCapturedAt čte z /cache/{base}_meta.json. Pro původní
+    // klíč volá photoCache.metaKey, kterému stačí klíč originálu.
+    // Tady rekonstruujeme cestu k originálu z display klíče.
+    const originalGuessHeic = `${photosPrefix}${base}.heic`;
+    const originalGuessJpg = `${photosPrefix}${base}.jpg`;
+    let capturedAt: string | null = null;
+    for (const orig of [originalGuessHeic, originalGuessJpg]) {
+      const d = await readMetaCapturedAt(client, orig);
+      if (d) {
+        capturedAt = d.toISOString();
+        break;
+      }
+    }
+
+    result.push({
+      key: displayKey,
+      url,
+      displayUrl: url,
+      thumbUrl,
+      capturedAt,
+    });
   }
   return result;
 }
@@ -624,7 +663,7 @@ export async function getCachedPhotoUrls(
       const t0 = Date.now();
       const { data: rows, error: selectError } = await supabase
         .from("photo_urls_cache")
-        .select("filename, display_url, thumb_url")
+        .select("filename, display_url, thumb_url, captured_at")
         .eq("trip_name", tripName)
         .eq("date", date);
       const ms = Date.now() - t0;
@@ -637,6 +676,7 @@ export async function getCachedPhotoUrls(
           key: r.filename,
           url: r.display_url ?? r.thumb_url ?? "",
           displayUrl: r.display_url ?? r.thumb_url ?? "",
+          capturedAt: r.captured_at ?? null,
         }));
       }
     } catch (e) {
@@ -665,6 +705,7 @@ export async function getCachedPhotoUrls(
             filename: base,
             display_url: p.displayUrl,
             thumb_url: p.thumbUrl,
+            captured_at: p.capturedAt,
             expires_at: expiresAt.toISOString(),
             updated_at: new Date().toISOString(),
           },
@@ -687,6 +728,7 @@ export async function getCachedPhotoUrls(
     key: p.key,
     url: p.url,
     displayUrl: p.displayUrl,
+    capturedAt: p.capturedAt,
   }));
 }
 

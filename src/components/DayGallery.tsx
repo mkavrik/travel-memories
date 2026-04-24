@@ -1,16 +1,17 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import Lightbox from "yet-another-react-lightbox";
 import Zoom from "yet-another-react-lightbox/plugins/zoom";
 import "yet-another-react-lightbox/styles.css";
-import exifr from "exifr";
 
 type Photo = {
   key: string;
   url: string;
   /** Pro lightbox (CACHE_DISPLAY); pokud chybí, použije se url */
   displayUrl?: string;
+  /** ISO timestamp DateTimeOriginal ze serveru (EXIF během convert-photos). */
+  capturedAt?: string | null;
 };
 
 type Props = {
@@ -21,8 +22,9 @@ type Props = {
 /** Extract a sortable timestamp from filename (e.g. IMG_20260203_143022) */
 function filenameSortKey(key: string): string {
   const filename = key.split("/").pop() ?? key;
-  // Try to find date-like patterns in filename
-  const match = filename.match(/(\d{4})[\-_]?(\d{2})[\-_]?(\d{2})[\-_]?(\d{2})[\-_]?(\d{2})[\-_]?(\d{2})/);
+  const match = filename.match(
+    /(\d{4})[\-_]?(\d{2})[\-_]?(\d{2})[\-_]?(\d{2})[\-_]?(\d{2})[\-_]?(\d{2})/,
+  );
   if (match) {
     return `${match[1]}${match[2]}${match[3]}${match[4]}${match[5]}${match[6]}`;
   }
@@ -32,68 +34,31 @@ function filenameSortKey(key: string): string {
 export function DayGallery({ photos }: Props) {
   const [open, setOpen] = useState(false);
   const [index, setIndex] = useState(0);
-  const [sortedPhotos, setSortedPhotos] = useState<Photo[]>([]);
 
-  const initialSlides = useMemo(() => {
-    const all: Photo[] = [];
-    for (const photo of photos) {
-      if (!photo.url) continue;
-      all.push(photo);
-    }
-    return all;
-  }, [photos]);
-
-  // Sort photos by EXIF capture time, fallback to filename. No special
-  // hero-first slot — the hero sits in its natural timeline position.
-  useEffect(() => {
-    let cancelled = false;
-
-    async function sortByExif() {
-      if (initialSlides.length <= 1) {
-        setSortedPhotos(initialSlides);
-        return;
-      }
-
-      const withDates = await Promise.all(
-        initialSlides.map(async (photo) => {
-          try {
-            const exif = await exifr.parse(photo.url, {
-              pick: ["DateTimeOriginal", "CreateDate", "ModifyDate"],
-            });
-            const date = exif?.DateTimeOriginal ?? exif?.CreateDate ?? exif?.ModifyDate;
-            return { photo, date: date instanceof Date ? date.getTime() : null };
-          } catch {
-            return { photo, date: null };
-          }
-        }),
+  // Řadíme čistě podle server-side capturedAt (EXIF DateTimeOriginal).
+  // Pokud ho nějaká fotka nemá (starý záznam bez _meta.json), jde
+  // na konec a mezi sebou jsou seřazené podle filename.
+  const sortedPhotos = useMemo(() => {
+    const withTime = photos
+      .filter((p) => p.url)
+      .map((photo) => ({
+        photo,
+        ms: photo.capturedAt
+          ? Date.parse(photo.capturedAt)
+          : Number.NaN,
+      }));
+    withTime.sort((a, b) => {
+      const aOk = Number.isFinite(a.ms);
+      const bOk = Number.isFinite(b.ms);
+      if (aOk && bOk) return a.ms - b.ms;
+      if (aOk) return -1;
+      if (bOk) return 1;
+      return filenameSortKey(a.photo.key).localeCompare(
+        filenameSortKey(b.photo.key),
       );
-
-      if (cancelled) return;
-
-      withDates.sort((a, b) => {
-        if (a.date && b.date) return a.date - b.date;
-        if (a.date) return -1;
-        if (b.date) return 1;
-        return filenameSortKey(a.photo.key).localeCompare(filenameSortKey(b.photo.key));
-      });
-
-      setSortedPhotos(withDates.map((w) => w.photo));
-    }
-
-    // Show immediately with filename sort, then re-sort with EXIF once loaded.
-    const filenameSorted = [...initialSlides].sort((a, b) =>
-      filenameSortKey(a.key).localeCompare(filenameSortKey(b.key)),
-    );
-    setSortedPhotos(filenameSorted);
-
-    sortByExif();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [initialSlides]);
-
-  const slides = sortedPhotos.length > 0 ? sortedPhotos : initialSlides;
+    });
+    return withTime.map((w) => w.photo);
+  }, [photos]);
 
   if (photos.length === 0) {
     return (
@@ -111,7 +76,7 @@ export function DayGallery({ photos }: Props) {
   return (
     <>
       <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-        {slides.map((photo, i) => (
+        {sortedPhotos.map((photo, i) => (
           <button
             key={photo.key}
             type="button"
@@ -134,7 +99,7 @@ export function DayGallery({ photos }: Props) {
           open={open}
           close={() => setOpen(false)}
           index={index}
-          slides={slides.map((photo) => ({
+          slides={sortedPhotos.map((photo) => ({
             src: photo.displayUrl ?? photo.url,
           }))}
           plugins={[Zoom]}

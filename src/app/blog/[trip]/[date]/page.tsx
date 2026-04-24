@@ -71,14 +71,15 @@ async function getDayData(tripParam: string, dateParam: string) {
       ? dates[currentIdx + 1]
       : null;
 
-  // Include the hero photo in the gallery list — DayGallery sorts by EXIF,
-  // so the hero naturally lands in its timeline position. The hero also
-  // stands alone as a full-width banner via HeroBackgroundImage, but it is
-  // intentionally not duplicated at slot 0 of the gallery anymore.
+  // Include the hero photo in the gallery list — DayGallery sorts by EXIF
+  // capture time (passed from server via capturedAt), so the hero naturally
+  // lands in its timeline position. The hero also stands alone as a full-width
+  // banner via HeroBackgroundImage.
   const galleryPhotos = photoUrls.map((p) => ({
     key: p.key,
     url: p.displayUrl,
     displayUrl: p.displayUrl,
+    capturedAt: p.capturedAt,
   }));
 
   return {

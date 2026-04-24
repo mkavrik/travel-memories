@@ -51,6 +51,7 @@ async function getTripData(tripParam: string) {
       key: p.key,
       url: p.displayUrl,
       displayUrl: p.displayUrl,
+      capturedAt: p.capturedAt,
     })),
     days,
   };
