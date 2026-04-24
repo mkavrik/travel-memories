@@ -65,6 +65,9 @@ export async function POST(request: Request) {
         await invalidateCache(tripName);
         revalidatePath(`/blog/${tripName}`);
       }
+      // /blog homepage cachuje trip cover URL; revaliduj vždy, day hero
+      // může být fallback pro trip cover, když trip hero nebyl nastaven.
+      revalidatePath("/blog");
     } catch (e) {
       console.warn("[SET_HERO_PHOTO] Cache invalidation failed:", e);
     }

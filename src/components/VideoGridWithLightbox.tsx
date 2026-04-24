@@ -122,6 +122,7 @@ export function VideoGridWithLightbox({ videos }: Props) {
               <iframe
                 src={streamEmbedUrl(video.streamId, false)}
                 title={video.filename}
+                loading="lazy"
                 allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
                 className="h-full w-full pointer-events-none"

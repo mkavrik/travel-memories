@@ -71,6 +71,8 @@ export function RouteCard({ route, heading }: Props) {
           <img
             src={route.mapTrailUrl}
             alt={`Mapa trasy — ${heading}`}
+            loading="lazy"
+            decoding="async"
             className="w-full object-contain transition duration-300 group-hover:scale-[1.02]"
           />
         </button>
@@ -111,6 +113,8 @@ export function RouteCard({ route, heading }: Props) {
                 <img
                   src={route.mapElevationUrl}
                   alt={`Výškový profil — ${heading}`}
+                  loading="lazy"
+                  decoding="async"
                   className="w-full object-contain transition duration-300 group-hover:scale-[1.02]"
                 />
               </button>
