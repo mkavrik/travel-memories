@@ -77,8 +77,8 @@ interface TripSummaryResult {
 
 interface HeroPhotoResult {
   scope: "day" | "trip";
+  /** Filename je prázdný, dokud uživatel neklikne na náhled. */
   filename: string;
-  reason: string;
   heroUrl: string | null;
   photos: { filename: string; url: string }[];
 }
@@ -933,9 +933,6 @@ export default function UploadPage() {
         total?: number;
         done?: boolean;
         error?: string;
-        filename?: string;
-        reason?: string;
-        heroUrl?: string | null;
         photos?: { filename: string; url: string }[];
       }>(res.body, (line) => {
         if (line.error) {
@@ -950,12 +947,11 @@ export default function UploadPage() {
             total: line.total,
           });
         }
-        if (line.done && line.filename) {
+        if (line.done) {
           finalResult = {
             scope,
-            filename: line.filename,
-            reason: line.reason ?? "",
-            heroUrl: line.heroUrl ?? null,
+            filename: "",
+            heroUrl: null,
             photos: line.photos ?? [],
           };
         }
@@ -966,17 +962,21 @@ export default function UploadPage() {
         return;
       }
       if (!finalResult) {
-        setHeroMessage("Výběr hero fotky skončil bez výsledku.");
+        setHeroMessage("Načítání kandidátů skončilo bez výsledku.");
         return;
       }
 
       const result: HeroPhotoResult = finalResult;
       if (scope === "day") {
         setDayHero(result);
-        setHeroMessage(`Vybraná hero fotka dne: ${result.filename}`);
+        setHeroMessage(
+          `Načteno ${result.photos.length} kandidátů — klikni na fotku pro výběr jako hero dne.`,
+        );
       } else {
         setTripHero(result);
-        setHeroMessage(`Vybraná hero fotka tripu: ${result.filename}`);
+        setHeroMessage(
+          `Načteno ${result.photos.length} kandidátů — klikni na fotku pro výběr jako hero tripu.`,
+        );
       }
     } catch (error) {
       console.error(error);
@@ -1012,7 +1012,7 @@ export default function UploadPage() {
         }),
       });
       const data = (await res.json()) as
-        | { scope: "day" | "trip"; filename: string; reason: string }
+        | { scope: "day" | "trip"; filename: string }
         | { error?: string };
 
       if (!res.ok || "error" in data) {
@@ -1026,7 +1026,6 @@ export default function UploadPage() {
       const payload = data as {
         scope: "day" | "trip";
         filename: string;
-        reason: string;
       };
 
       if (scope === "day" && dayHero) {
@@ -1036,7 +1035,6 @@ export default function UploadPage() {
         setDayHero({
           ...dayHero,
           filename: payload.filename,
-          reason: payload.reason,
           heroUrl,
         });
       } else if (scope === "trip" && tripHero) {
@@ -1046,7 +1044,6 @@ export default function UploadPage() {
         setTripHero({
           ...tripHero,
           filename: payload.filename,
-          reason: payload.reason,
           heroUrl,
         });
       }
@@ -1977,26 +1974,24 @@ export default function UploadPage() {
               <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-xs">
                 {dayHero && (
                   <div className="space-y-2">
-                    <p className="font-medium text-slate-200">
-                      Hero fotka dne:{" "}
-                      <span className="text-sky-300">
-                        {dayHero.filename}
-                      </span>
-                    </p>
-                    {dayHero.heroUrl && (
+                    {dayHero.filename && (
+                      <p className="font-medium text-slate-200">
+                        Hero fotka dne:{" "}
+                        <span className="text-sky-300">
+                          {dayHero.filename}
+                        </span>
+                      </p>
+                    )}
+                    {dayHero.filename && dayHero.heroUrl && (
                       <img
                         src={dayHero.heroUrl}
                         alt={dayHero.filename}
                         className="max-h-40 w-full rounded-md object-cover"
                       />
                     )}
-                    <p className="text-slate-400">
-                      Důvod: {dayHero.reason}
-                    </p>
                     <div className="space-y-1">
                       <p className="text-slate-400">
-                        Manuální přepis – klikni na náhled (až 40 fotek, jen s
-                        cache), pak vyber jako hero:
+                        Klikni na fotku pro výběr jako hero dne (až 40 fotek, jen s&nbsp;cache):
                       </p>
                       <div className="flex flex-wrap gap-2">
                         {dayHero.photos.map((p) => (
@@ -2026,26 +2021,25 @@ export default function UploadPage() {
 
                 {tripHero && (
                   <div className="space-y-2 border-t border-slate-800 pt-3 mt-3">
-                    <p className="font-medium text-slate-200">
-                      Hero fotka tripu:{" "}
-                      <span className="text-sky-300">
-                        {tripHero.filename}
-                      </span>
-                    </p>
-                    {tripHero.heroUrl && (
+                    {tripHero.filename && (
+                      <p className="font-medium text-slate-200">
+                        Hero fotka tripu:{" "}
+                        <span className="text-sky-300">
+                          {tripHero.filename}
+                        </span>
+                      </p>
+                    )}
+                    {tripHero.filename && tripHero.heroUrl && (
                       <img
                         src={tripHero.heroUrl}
                         alt={tripHero.filename}
                         className="max-h-40 w-full rounded-md object-cover"
                       />
                     )}
-                    <p className="text-slate-400">
-                      Důvod: {tripHero.reason}
-                    </p>
                     <div className="space-y-1">
                       <p className="text-slate-400">
-                        Manuální přepis – klikni na náhled (až 40 fotek, dedupe
-                        podle názvu), pak vyber jako hero:
+                        Klikni na fotku pro výběr jako hero tripu (až 40 fotek, dedupe
+                        podle názvu):
                       </p>
                       <div className="flex flex-wrap gap-2">
                         {tripHero.photos.map((p) => (

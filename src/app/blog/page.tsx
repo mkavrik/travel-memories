@@ -43,6 +43,13 @@ async function getTripsForBlog(): Promise<TripCard[]> {
       };
     }),
   );
+  // Nejnovější trip nahoře. Tripy bez firstDate (žádné dny v R2) jdou na konec.
+  trips.sort((a, b) => {
+    if (a.firstDate && b.firstDate) return b.firstDate.localeCompare(a.firstDate);
+    if (a.firstDate) return -1;
+    if (b.firstDate) return 1;
+    return a.name.localeCompare(b.name);
+  });
   return trips;
 }
 

@@ -1,25 +1,12 @@
 import {
   createR2Client,
-  deleteObject,
   isOriginalImage,
   listObjects,
   getTextObject,
-  putTextObject,
   objectExists,
   getSignedR2Url,
 } from "@/lib/r2";
-import {
-  buildCacheKey,
-  CACHE_SUFFIX_THUMB,
-  getSignedHeroUrl,
-  getAICacheBuffer,
-  toOriginalHeroFilename,
-} from "@/lib/photoCache";
-import {
-  selectHeroPhotoWithClaude,
-  type HeroPhotoCandidate,
-} from "@/lib/agents/heroPhotoAgent";
-import { invalidateCache } from "@/lib/cache";
+import { buildCacheKey, CACHE_SUFFIX_THUMB } from "@/lib/photoCache";
 
 export const runtime = "nodejs";
 
@@ -29,12 +16,6 @@ type RequestBody = {
   tripName?: string;
   date?: string | null;
   scope?: Scope;
-  manualFilename?: string | null;
-};
-
-type HeroMeta = {
-  filename: string;
-  reason: string;
 };
 
 type EmitFn = (obj: Record<string, unknown>) => void;
@@ -74,7 +55,7 @@ async function getDayPhotoCandidates(
     if (withThumb.length >= MAX_MANUAL_PHOTOS) break;
   }
 
-  return { client, basePrefix, candidates: withThumb };
+  return { candidates: withThumb };
 }
 
 async function getTripPhotoCandidates(tripName: string, emit: EmitFn) {
@@ -94,8 +75,8 @@ async function getTripPhotoCandidates(tripName: string, emit: EmitFn) {
   }
   const sortedDates = Array.from(dates).sort();
 
-  // 1) For each day, read hero_photo.json → the chosen day hero photo is a
-  //    strong candidate for the trip hero. Always include all day heroes.
+  // 1) For each day, read hero_photo.json → the chosen day hero photo is
+  //    always included as a trip-hero candidate.
   emit({ progress: "Sbírám hero fotky jednotlivých dní…" });
   const dayHeroes: { key: string; filename: string }[] = [];
   const heroFilenames = new Set<string>();
@@ -172,19 +153,19 @@ async function getTripPhotoCandidates(tripName: string, emit: EmitFn) {
     });
   }
 
-  return {
-    client,
-    basePrefix,
-    candidates,
-  } as const;
+  return { candidates } as const;
 }
 
+/**
+ * Vrátí seznam kandidátů pro manuální výběr hero fotky. Samotný výběr
+ * (uložení hero_photo.json a invalidace cache) řeší POST /api/set-hero-photo
+ * po kliknutí uživatele na konkrétní náhled v UI.
+ */
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as RequestBody;
   const tripName = (body.tripName || "").trim();
   const date = (body.date || "").trim() || null;
   const scope: Scope = body.scope === "trip" ? "trip" : "day";
-  const manualFilename = body.manualFilename?.trim() || null;
 
   const encoder = new TextEncoder();
 
@@ -204,186 +185,28 @@ export async function POST(request: Request) {
           return;
         }
 
-        if (scope === "day") {
-          const { client, basePrefix, candidates } =
-            await getDayPhotoCandidates(tripName, date!, emit);
-
-          if (candidates.length === 0) {
-            emit({ error: "Pro tento den nejsou v R2 žádné fotky." });
-            return;
-          }
-
-          // Omez počet fotek pro Claude na max 10 rovnoměrně rozložených
-          const dayCandidates =
-            candidates.length <= 10
-              ? candidates
-              : Array.from({ length: 10 }, (_, i) => {
-                  const idx = Math.round(
-                    (i * (candidates.length - 1)) / (10 - 1),
-                  );
-                  return candidates[idx];
-                });
-
-          const photosForClaude: HeroPhotoCandidate[] = [];
-          for (const c of dayCandidates) {
-            const outBuffer = await getAICacheBuffer(client, c.key);
-            if (!outBuffer) continue;
-            photosForClaude.push({
-              filename: c.filename,
-              mediaType: "image/jpeg",
-              data: outBuffer.toString("base64"),
-            });
-          }
-
-          let selection: HeroMeta;
-          if (manualFilename) {
-            selection = {
-              filename: manualFilename,
-              reason: "Manuální výběr uživatelem.",
-            };
-          } else {
-            emit({ progress: "Analyzuji Claudem…" });
-            const aiSelection = await selectHeroPhotoWithClaude({
-              tripName,
-              date,
-              scope: "day",
-              photos: photosForClaude,
-            });
-            selection = {
-              filename: aiSelection.hero,
-              reason: aiSelection.reason,
-            };
-          }
-
-          emit({ progress: "Ukládám výběr…" });
-          const heroKey = `${basePrefix}outputs/hero_photo.json`;
-          if (await objectExists(client, heroKey)) {
-            await deleteObject(client, heroKey);
-          }
-          const originalFilename = toOriginalHeroFilename(selection.filename);
-          await putTextObject(
-            client,
-            heroKey,
-            JSON.stringify({
-              filename: originalFilename,
-              reason: selection.reason,
-            }),
-            "application/json",
-          );
-
-          try {
-            await invalidateCache(tripName, date ?? undefined);
-          } catch (e) {
-            console.warn("[SELECT_HERO_PHOTO] Cache invalidation failed:", e);
-          }
-
-          const chosen = candidates.find(
-            (c) =>
-              c.filename === originalFilename ||
-              toOriginalHeroFilename(c.filename) === originalFilename,
-          );
-          const heroUrl = chosen
-            ? await getSignedHeroUrl(client, chosen.key)
-            : null;
-
-          const previewPhotos = candidates.map((c) => ({
-            filename: c.filename,
-            url: c.url,
-          }));
-
-          emit({
-            done: true,
-            scope: "day",
-            filename: originalFilename,
-            reason: selection.reason,
-            heroUrl,
-            photos: previewPhotos,
-          });
-          return;
-        }
-
-        // scope === "trip"
-        const { client, basePrefix, candidates } =
-          await getTripPhotoCandidates(tripName, emit);
+        const { candidates } =
+          scope === "day"
+            ? await getDayPhotoCandidates(tripName, date!, emit)
+            : await getTripPhotoCandidates(tripName, emit);
 
         if (candidates.length === 0) {
-          emit({ error: "Pro tento trip nejsou v R2 žádné fotky." });
+          emit({
+            error:
+              scope === "day"
+                ? "Pro tento den nejsou v R2 žádné fotky."
+                : "Pro tento trip nejsou v R2 žádné fotky.",
+          });
           return;
         }
-
-        const photosForClaude: HeroPhotoCandidate[] = [];
-        for (const c of candidates) {
-          const outBuffer = await getAICacheBuffer(client, c.key);
-          if (!outBuffer) continue;
-          photosForClaude.push({
-            filename: c.filename,
-            mediaType: "image/jpeg",
-            data: outBuffer.toString("base64"),
-          });
-        }
-
-        const previewPhotos = candidates.map((c) => ({
-          filename: c.filename,
-          url: c.url,
-        }));
-
-        let selection: HeroMeta;
-        if (manualFilename) {
-          selection = {
-            filename: manualFilename,
-            reason: "Manuální výběr uživatelem.",
-          };
-        } else {
-          emit({ progress: "Analyzuji Claudem…" });
-          const aiSelection = await selectHeroPhotoWithClaude({
-            tripName,
-            scope: "trip",
-            photos: photosForClaude,
-          });
-          selection = {
-            filename: aiSelection.hero,
-            reason: aiSelection.reason,
-          };
-        }
-
-        emit({ progress: "Ukládám výběr…" });
-        const heroKey = `${basePrefix}summary/outputs/hero_photo.json`;
-        if (await objectExists(client, heroKey)) {
-          await deleteObject(client, heroKey);
-        }
-        const originalFilename = toOriginalHeroFilename(selection.filename);
-        await putTextObject(
-          client,
-          heroKey,
-          JSON.stringify({
-            filename: originalFilename,
-            reason: selection.reason,
-          }),
-          "application/json",
-        );
-
-        try {
-          await invalidateCache(tripName);
-        } catch (e) {
-          console.warn("[SELECT_HERO_PHOTO] Cache invalidation failed:", e);
-        }
-
-        const chosen = candidates.find(
-          (c) =>
-            c.filename === originalFilename ||
-            toOriginalHeroFilename(c.filename) === originalFilename,
-        );
-        const heroUrl = chosen
-          ? await getSignedHeroUrl(client, chosen.key)
-          : null;
 
         emit({
           done: true,
-          scope: "trip",
-          filename: originalFilename,
-          reason: selection.reason,
-          heroUrl,
-          photos: previewPhotos,
+          scope,
+          photos: candidates.map((c) => ({
+            filename: c.filename,
+            url: c.url,
+          })),
         });
       } catch (error: unknown) {
         console.error("[SELECT_HERO_PHOTO] Unexpected error", error);
@@ -391,7 +214,7 @@ export async function POST(request: Request) {
           error:
             error instanceof Error
               ? error.message
-              : "Nastala chyba při výběru hero fotky.",
+              : "Nastala chyba při načítání kandidátů hero fotky.",
         });
       } finally {
         controller.close();

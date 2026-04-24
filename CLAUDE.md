@@ -79,8 +79,10 @@ ZPRACOVÁNÍ (tlačítka na /upload stránce)
   │    Auto trasy: Routing API → doba jízdy     │
   │                                             │
   │  Vybrat hero fotku                          │
-  │    fotky → Claude vision                    │
-  │    → hero_photo.json                        │
+  │    /api/select-hero-photo → progres bar     │
+  │    → až 40 kandidátů (thumbnails)           │
+  │    Klik na náhled → /api/set-hero-photo     │
+  │    → hero_photo.json (bez AI hodnocení)     │
   │                                             │
   │  Upravit text                               │
   │    Načíst blog_post.txt z R2 → textarea     │
@@ -219,8 +221,8 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 
 ### 7. Vybrat hero fotku
 - Klikni **Vybrat hero fotku dne**
-- Agent vybere nejlepší fotku automaticky
-- Pokud nesouhlasíš → klikni na jinou v manuálním výběru
+- Načte se až 40 kandidátů (fotky s `_thumb.jpg` cache), progres bar ukazuje fáze: listing → příprava náhledů N/M
+- Klikni na vybraný náhled v gridu → hero se uloží přes `/api/set-hero-photo` (žádný AI výběr, čistě manuálně)
 - Hero fotka se zobrazí jako cover dne v sidebaru + hero banner na stránce dne
 
 ---
@@ -247,7 +249,8 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 
 ### 6. Vybrat hero fotku tripu
 - Klikni **Vybrat hero fotku tripu**
-- Agent vybírá ze VŠECH fotek tripu (všechny dny + summary)
+- Kandidáty tvoří: všechny day heroes (z `hero_photo.json` každého dne) + náhodný vzorek ostatních fotek (summary + dny), dedup podle filename, max 40 total
+- Klikni na vybraný náhled v gridu → uloží se jako hero tripu
 - Hero fotka se zobrazí jako cover tripu v sidebaru + hero banner na stránce tripu
 
 ---
@@ -264,8 +267,7 @@ Tento postup opakuj pro každý den tripu. Vše se dělá přes **/upload** str�
 | 3D globus | react-globe.gl | Three.js wrapper, NASA textury |
 | Přepis audia | OpenAI Whisper | nejlepší kvalita přepisu |
 | Agenti (text) | Claude API (claude-opus-4-6) | blog post, Instagram popisky |
-| Agenti (fotky) | Claude API | výběr hero fotky, analýza obsahu |
-| Konverze fotek | sharp + heic-convert | HEIC → JPEG, 3 verze cache |
+| Konverze fotek | sharp + heic-convert | HEIC → JPEG, 2 verze cache (thumb + display) |
 | Mapy | Mapy.cz Static API + Routing API | Static = mapa s GPX; Routing (`car_fast`) = doba jízdy pro auto trasy |
 | EXIF čtení | exifr | řazení fotek v galerii podle data pořízení |
 | CSS | Tailwind CSS | utility-first, CSS custom properties |
@@ -378,18 +380,16 @@ trips/
 - Nástroj: Claude API
 - Výstup: popisek příspěvku, návrh výběru fotek, návrh pořadí
 
-### Agent 4 – Fotky
+### Konverze fotek (sharp + heic-convert)
 - Vstup: fotky dne nebo tripu (HEIC, JPG)
-- Nástroj: sharp + heic-convert (konverze a resize)
 - Pipeline:
   - HEIC → heic-convert → JPEG
-  - Všechny fotky → sharp resize do tří verzí:
+  - Všechny fotky → sharp resize do dvou verzí:
     - `_thumb.jpg` (400x300, q75) – náhledy a manuální výběr hero fotky
     - `_display.jpg` (1920x1280, q90) – galerie, lightbox, hero fotky na blogu
-    - `_ai.jpg` (800x600, q70) – Claude API analýza
   - Cache verzí v R2: `trips/[trip]/[date]/photos/cache/`
 - Zobrazují se VŠECHNY nahrané fotky – žádný automatický výběr
-- Hero fotka dne/tripu: Claude vision vybere nejlepší, autor může manuálně přepsat
+- Hero fotka dne/tripu: čistě manuální výběr ze seznamu kandidátů v gridu (žádné AI hodnocení). Tlačítko "Vybrat hero" jen načte až 40 thumbnailů; uživatel klikne na preferovanou fotku a ta se uloží
 
 ---
 
@@ -507,8 +507,10 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - [x] Sync videí vždy invaliduje Supabase cache + `revalidatePath` (nezávisle na tom, jestli se něco nového nahrálo)
 - [x] `response-cache-control: public, max-age=604800, immutable` na všech podepsaných image URL (fotky, hero, mapy) — prohlížeč reálně cachuje mezi návštěvami
 - [x] Stream kód akceptuje `CLOUDFLARE_ACCOUNT_ID` i `CLOUDFLARE_R2_ACCOUNT_ID` (stejná hodnota napříč službami, žádná duplikace v env vars)
+- [x] Progress bar při výběru hero fotky (NDJSON streaming v `/api/select-hero-photo`) — listing → příprava náhledů N/M → done
+- [x] Odstranění Claude vision hero pickeru — žádná AI evaluace ani auto-výběr fotek. `/api/select-hero-photo` jen vrací kandidáty pro grid, manuální klik na náhled uloží přes `/api/set-hero-photo`. Smazán `heroPhotoAgent.ts`, `_ai.jpg` cache verze (konverze teď dělá jen thumb + display), odstraněno `reason` z hero_photo.json. `set-hero-photo` nově invaliduje cache + `revalidatePath` (předtím chybělo)
 
 ---
 
 *Dokument vytvořen na základě úvodní architektury diskutované s Claude (březen 2026).*
-*Poslední aktualizace: 23. dubna 2026 — direct-to-R2 upload přes presigned PUT URL, Cloudflare Stream přes `/copy`, progress bar, mobile upload fix, browser caching fotek přes `response-cache-control`.*
+*Poslední aktualizace: 23. dubna 2026 — direct-to-R2 upload přes presigned PUT URL, Cloudflare Stream přes `/copy`, progress bar u uploadu i hero pickeru, mobile upload fix, browser caching fotek přes `response-cache-control`, odstranění Claude vision hero pickeru (čistě manuální výběr z gridu).*

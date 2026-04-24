@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import {
   createR2Client,
   putTextObject,
@@ -6,6 +7,7 @@ import {
   deleteObject,
 } from "@/lib/r2";
 import { toOriginalHeroFilename } from "@/lib/photoCache";
+import { invalidateCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
@@ -48,23 +50,29 @@ export async function POST(request: Request) {
       await deleteObject(client, heroKey);
     }
 
-    const payload = {
-      filename: originalFilename,
-      reason: "Manuálně vybrána",
-    };
-
     await putTextObject(
       client,
       heroKey,
-      JSON.stringify(payload),
+      JSON.stringify({ filename: originalFilename }),
       "application/json",
     );
+
+    try {
+      if (isDay) {
+        await invalidateCache(tripName, date ?? undefined);
+        revalidatePath(`/blog/${tripName}/${date}`);
+      } else {
+        await invalidateCache(tripName);
+        revalidatePath(`/blog/${tripName}`);
+      }
+    } catch (e) {
+      console.warn("[SET_HERO_PHOTO] Cache invalidation failed:", e);
+    }
 
     return NextResponse.json(
       {
         scope: isDay ? "day" : "trip",
         filename: originalFilename,
-        reason: payload.reason,
       },
       { status: 200 },
     );

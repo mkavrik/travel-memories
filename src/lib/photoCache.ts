@@ -11,7 +11,6 @@ import sharp from "sharp";
 /** Přípony cache souborů v /cache/ */
 export const CACHE_SUFFIX_THUMB = "thumb";
 const CACHE_SUFFIX_DISPLAY = "display";
-const CACHE_SUFFIX_AI = "ai";
 
 const SPECS: Record<
   string,
@@ -19,12 +18,13 @@ const SPECS: Record<
 > = {
   [CACHE_SUFFIX_THUMB]: { width: 400, height: 300, quality: 75 },
   [CACHE_SUFFIX_DISPLAY]: { width: 1920, height: 1280, quality: 90 },
-  [CACHE_SUFFIX_AI]: { width: 800, height: 600, quality: 70 },
 };
 
 /**
  * Normalize hero filename to original name (e.g. IMG_9434.heic).
  * Strips cache suffixes (_v1_*, _thumb.jpg, _display.jpg, _ai.jpg).
+ * The _ai.jpg check stays for backwards-compatibility with any existing
+ * R2 objects left over from the removed Claude picker.
  */
 export function toOriginalHeroFilename(filename: string): string {
   const f = filename.trim();
@@ -94,7 +94,7 @@ export async function ensureAllCaches(
   }
 
   const pipeline = sharp(decodedBuffer);
-  const suffixes = [CACHE_SUFFIX_THUMB, CACHE_SUFFIX_DISPLAY, CACHE_SUFFIX_AI] as const;
+  const suffixes = [CACHE_SUFFIX_THUMB, CACHE_SUFFIX_DISPLAY] as const;
 
   await Promise.all(
     suffixes.map(async (suffix) => {
@@ -119,15 +119,6 @@ async function ensureDisplayCache(
   return (await objectExists(client, key)) ? key : null;
 }
 
-async function ensureAICache(
-  client: S3Client,
-  originalKey: string,
-): Promise<string | null> {
-  await ensureAllCaches(client, originalKey);
-  const key = buildCacheKey(originalKey, CACHE_SUFFIX_AI);
-  return (await objectExists(client, key)) ? key : null;
-}
-
 /**
  * Lightbox a hero fotky na blogu → _display.jpg
  */
@@ -141,15 +132,3 @@ export async function getSignedDisplayUrl(
 }
 
 export const getSignedHeroUrl = getSignedDisplayUrl;
-
-/**
- * Claude API analýza → _ai.jpg
- */
-export async function getAICacheBuffer(
-  client: S3Client,
-  originalKey: string,
-): Promise<Buffer | null> {
-  const cacheKey = await ensureAICache(client, originalKey);
-  if (!cacheKey) return null;
-  return getObjectBuffer(client, cacheKey);
-}
