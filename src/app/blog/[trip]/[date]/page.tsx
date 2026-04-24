@@ -43,11 +43,22 @@ async function getDayData(tripParam: string, dateParam: string) {
   const tripName = decodeURIComponent(tripParam);
   const date = decodeURIComponent(dateParam);
 
+  const t0 = Date.now();
   const [dayData, photoUrls, daysList] = await Promise.all([
     getCachedDayData(tripName, date),
     getCachedPhotoUrls(tripName, date),
     getCachedTripDays(tripName),
   ]);
+  const elapsed = Date.now() - t0;
+
+  console.log(
+    `[DAY_PAGE] ${tripName}/${date}: ${elapsed}ms total; ` +
+      `photos=${photoUrls.length}, ` +
+      `videos=${dayData?.streamVideos.length ?? 0}, ` +
+      `routes=${dayData?.routes.length ?? 0}, ` +
+      `blogLen=${dayData?.blogPost?.length ?? 0}, ` +
+      `daysInTrip=${daysList.length}`,
+  );
 
   if (!dayData) {
     notFound();
