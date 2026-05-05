@@ -490,23 +490,42 @@ export async function getCachedDayData(
  * potřebuješ prev/next navigaci a nezobrazuješ per-day cover.
  */
 export async function getTripDays(tripName: string): Promise<string[]> {
-  const key = `trip/${tripName}/days`;
+  const { days } = await getTripSections(tripName);
+  return days;
+}
+
+/**
+ * Source of truth pro sekce tripu (R2). Vrací list YYYY-MM-DD dnů a flag
+ * `hasSummary`. Používá se warm-cache: aby refresh pokryl vše, co v R2
+ * existuje, ne jen to, co `getTripDays` filtruje.
+ *
+ * Bug, který tohle eliminuje: warm-cache dříve iteroval `getTripDays()`
+ * a per-date mazal `photo_urls_cache`. Řádek s `date='summary'` (zapsaný
+ * při renderu trip page) tím nikdy nebyl smazán, podepsaná URL v něm
+ * po 7 dnech expirovala → 403 na summary fotkách.
+ */
+export async function getTripSections(
+  tripName: string,
+): Promise<{ days: string[]; hasSummary: boolean }> {
+  const key = `trip/${tripName}/sections`;
   const tR2 = Date.now();
   const client = createR2Client();
   const basePrefix = `trips/${tripName}/`;
   const allObjects = await listObjects(client, basePrefix);
   const datesSet = new Set<string>();
+  let hasSummary = false;
   for (const obj of allObjects) {
     const k = obj.Key || "";
     const relative = k.replace(basePrefix, "");
-    const [maybeDate] = relative.split("/");
-    if (/^\d{4}-\d{2}-\d{2}$/.test(maybeDate)) datesSet.add(maybeDate);
+    const [section] = relative.split("/");
+    if (/^\d{4}-\d{2}-\d{2}$/.test(section)) datesSet.add(section);
+    else if (section === "summary") hasSummary = true;
   }
-  const sortedDates = Array.from(datesSet).sort();
+  const days = Array.from(datesSet).sort();
   console.log(
-    `${key}: R2 list ${Date.now() - tR2} ms, ${sortedDates.length} days`,
+    `${key}: R2 list ${Date.now() - tR2} ms, ${days.length} days, summary=${hasSummary}`,
   );
-  return sortedDates;
+  return { days, hasSummary };
 }
 
 /**

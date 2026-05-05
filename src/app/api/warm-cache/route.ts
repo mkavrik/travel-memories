@@ -3,8 +3,8 @@ import {
   getCachedDayData,
   getCachedPhotoUrls,
   getCachedTripData,
-  getCachedTripDays,
   getTripNames,
+  getTripSections,
 } from "@/lib/cache";
 
 export const runtime = "nodejs";
@@ -36,41 +36,43 @@ async function warmCache(): Promise<ReadableStream> {
         let tripCount = 0;
         let dayCount = 0;
 
+        let summaryCount = 0;
+
         for (const tripName of tripNames) {
           send({ message: `Warming: [${tripName}]…` });
 
-          // Force refresh trip-level cache.
+          // Bulk delete VŠECH řádků pro daný trip — bez per-date filtru.
+          // Iterovat přes konkrétní `date` hodnoty by neselo, protože
+          // `getTripDays` filtruje jen YYYY-MM-DD a řádky s `date='summary'`
+          // (nebo cokoli budoucího) by zůstaly se starou expirovanou URL.
           if (supabase) {
             await supabase.from("trips_cache").delete().eq("trip_name", tripName);
+            await supabase.from("days_cache").delete().eq("trip_name", tripName);
+            await supabase.from("photo_urls_cache").delete().eq("trip_name", tripName);
           }
+
           await getCachedTripData(tripName);
           tripCount += 1;
 
-          const days = await getCachedTripDays(tripName);
-          for (const { date } of days) {
-            send({ message: `Warming: [${tripName}/${date}]…` });
+          // Sekce, které v R2 reálně existují → repopulujeme přesně je.
+          const { days, hasSummary } = await getTripSections(tripName);
 
-            // Force refresh day-level cache (days_cache + photo_urls_cache).
-            if (supabase) {
-              await supabase
-                .from("days_cache")
-                .delete()
-                .eq("trip_name", tripName)
-                .eq("date", date);
-              await supabase
-                .from("photo_urls_cache")
-                .delete()
-                .eq("trip_name", tripName)
-                .eq("date", date);
-            }
+          for (const date of days) {
+            send({ message: `Warming: [${tripName}/${date}]…` });
             await getCachedDayData(tripName, date);
             await getCachedPhotoUrls(tripName, date);
             dayCount += 1;
           }
+
+          if (hasSummary) {
+            send({ message: `Warming: [${tripName}/summary]…` });
+            await getCachedPhotoUrls(tripName, "summary");
+            summaryCount += 1;
+          }
         }
 
         send({
-          message: `Cache warming hotovo: ${tripCount} tripů, ${dayCount} dní`,
+          message: `Cache warming hotovo: ${tripCount} tripů, ${dayCount} dní, ${summaryCount} summary`,
         });
       } catch (e) {
         send({
