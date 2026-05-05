@@ -1,3 +1,4 @@
+import { revalidatePath } from "next/cache";
 import { createSupabaseClient } from "@/lib/supabase";
 import {
   getCachedDayData,
@@ -68,6 +69,16 @@ async function warmCache(): Promise<ReadableStream> {
             send({ message: `Warming: [${tripName}/summary]…` });
             await getCachedPhotoUrls(tripName, "summary");
             summaryCount += 1;
+          }
+
+          // Flush ISR cache pro stránky tripu — jinak Next.js dál servíruje
+          // cached HTML s podepsanými URL z předchozího renderu (i když
+          // Supabase už má čerstvé). Trip page má `revalidate = 3600`,
+          // takže bez explicitní revalidace by stale HTML žil až hodinu.
+          const tripEncoded = encodeURIComponent(tripName);
+          revalidatePath(`/blog/${tripEncoded}`);
+          for (const date of days) {
+            revalidatePath(`/blog/${tripEncoded}/${date}`);
           }
         }
 
