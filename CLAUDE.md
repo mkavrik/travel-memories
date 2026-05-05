@@ -96,7 +96,13 @@ SUPABASE (caching)
   /api/warm-cache 1× denně (04:00 UTC), který smaže řádky a znovu
   naplní s čerstvými podepsanými R2 URL. Max 7 dní je S3 SigV4 cap
   pro podepsané URL — bez cronu by URL po týdnu expirovaly (403).
-  Manuální warming přes tlačítko "Zahřát cache" na /upload
+  Manuální warming přes tlačítko "Zahřát cache" na /upload.
+  Warm-cache mažea repopuluje data podle source-of-truth z R2:
+  bulk DELETE per celý trip (žádný eq na `date`) + iteruje sekce
+  vrácené `getTripSections()` (YYYY-MM-DD dny + summary + cokoli
+  budoucího). Pak volá `revalidatePath` per trip a den, jinak
+  by `revalidate = 3600` na trip page držel cached fetch responses
+  ze Supabase i po refreshi DB.
   Presigned GET URL nesou response-cache-control
   (public, max-age=604800, immutable) → prohlížeč fotky
   reálně cachuje mezi návštěvami
@@ -515,8 +521,12 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - [x] EXIF capture time se čte server-side při `ensureAllCaches` a ukládá do `_meta.json` sidecar v `photos/cache/` + do `photo_urls_cache.captured_at` sloupce (migrace `004_photo_captured_at.sql`). DayGallery řadí podle server-hodnoty, klient už neparsuje EXIF přes `exifr.parse(url)` (30 fetchů za page render). Pro starší dny je potřeba re-run `convert-photos` (funkce je idempotentní — když thumb existuje ale meta chybí, dogeneruje jen meta).
 - [x] Progress bar při výběru hero fotky (NDJSON streaming v `/api/select-hero-photo`) — listing → příprava náhledů N/M → done
 - [x] Odstranění Claude vision hero pickeru — žádná AI evaluace ani auto-výběr fotek. `/api/select-hero-photo` jen vrací kandidáty pro grid, manuální klik na náhled uloží přes `/api/set-hero-photo`. Smazán `heroPhotoAgent.ts`, `_ai.jpg` cache verze (konverze teď dělá jen thumb + display), odstraněno `reason` z hero_photo.json. `set-hero-photo` nově invaliduje cache + `revalidatePath` (předtím chybělo)
+- [x] Fix warm-cache: bulk delete per celý trip + sekce z R2 (`getTripSections`). Předtím cron iteroval `getTripDays()` (jen YYYY-MM-DD) a per-date mazal řádky, takže `photo_urls_cache` řádky s `date='summary'` se nikdy neresetovaly. Po 7 dnech podepsaná R2 URL v nich expirovala → 403 na summary fotkách (Norsko, fotka `rentgen`). Bulk delete bez `eq('date', X)` filtru pokrývá i jakékoli budoucí sekce mimo YYYY-MM-DD a summary.
+- [x] Fix warm-cache: po refreshi Supabase volá `revalidatePath` per trip + day. Trip page má `revalidate = 3600` ISR a Next.js fetch cache držela cached Supabase responses se starými URL i po smazání a repopulaci řádků. Bez explicit invalidace by stale HTML žil až hodinu — i s aktuálními daty v Supabase.
 
 ---
 
 *Dokument vytvořen na základě úvodní architektury diskutované s Claude (březen 2026).*
 *Poslední aktualizace: 24. dubna 2026 — řazení tripů na /blog podle data sestupně, lazy loading fotek/videí/map, day page jen lehký `getTripDays()` místo `getCachedTripDays` (Norsko 21 s → 1 s), zrušená TTL-based eviction Supabase cache + denní Vercel cron force-refresh na `/api/warm-cache` (`vercel.json`), server-side EXIF capture time v `_meta.json` + sloupec `photo_urls_cache.captured_at` (migrace 004) → správné řazení galerie bez klient-side exifr fetchů.*
+
+*5. května 2026 — fix warm-cache pro summary sekce: nová helper funkce `getTripSections()` (R2 = source of truth, vrací `{ days, hasSummary }`), bulk DELETE per celý trip bez `eq('date', X)` filtru, `revalidatePath` po refreshi proti Next.js fetch cache. Bug: Norsko summary fotka (`rentgen`) vracela 403, protože `getTripDays()` filtroval jen YYYY-MM-DD a řádek s `date='summary'` v `photo_urls_cache` cron nikdy nemazal — podepsaná URL po 7 dnech expirovala. Po opravě je systémově nemožné, aby cron přehlédl jakoukoli budoucí sekci.*
