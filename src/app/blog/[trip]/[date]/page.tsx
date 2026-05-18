@@ -32,11 +32,7 @@ export async function generateMetadata({
 export const revalidate = 3600;
 
 function getTripShortName(name: string): string {
-  return name
-    .replace(/^\d{2}_\d{4}\s*/, "")
-    .split(/\s+/)
-    .slice(0, 3)
-    .join(" ");
+  return name.replace(/^\d{2}_\d{4}\s*/, "").trim();
 }
 
 async function getDayData(tripParam: string, dateParam: string) {

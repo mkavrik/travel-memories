@@ -24,11 +24,7 @@ type TripCard = {
 };
 
 function getTripShortName(name: string): string {
-  return name
-    .replace(/^\d{2}_\d{4}\s*/, "")
-    .split(/\s+/)
-    .slice(0, 2)
-    .join(" ");
+  return name.replace(/^\d{2}_\d{4}\s*/, "").trim();
 }
 
 async function getTripsForBlog(): Promise<TripCard[]> {
