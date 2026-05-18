@@ -135,6 +135,8 @@ export default function UploadPage() {
   const [selectedTripOption, setSelectedTripOption] = useState<string>("");
   const [isLoadingTrips, setIsLoadingTrips] = useState(false);
   const [tripsError, setTripsError] = useState<string | null>(null);
+  const [isTripDropdownOpen, setIsTripDropdownOpen] = useState(false);
+  const tripDropdownRef = useRef<HTMLDivElement>(null);
   const [sectionType, setSectionType] = useState<SectionType>("day");
   const [date, setDate] = useState("");
   const [files, setFiles] = useState<FileList | null>(null);
@@ -268,6 +270,27 @@ export default function UploadPage() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isTripDropdownOpen) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        tripDropdownRef.current &&
+        !tripDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsTripDropdownOpen(false);
+      }
+    }
+    function handleEsc(event: KeyboardEvent) {
+      if (event.key === "Escape") setIsTripDropdownOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEsc);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEsc);
+    };
+  }, [isTripDropdownOpen]);
 
   useEffect(() => {
     const trimmed = tripName?.trim();
@@ -1391,34 +1414,91 @@ export default function UploadPage() {
               Název tripu
             </label>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <select
-                value={selectedTripOption || (tripOptions.length === 0 ? "" : "new")}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setSelectedTripOption(value === "new" ? "" : value);
-                  if (value === "new") {
-                    setTripName("");
-                  } else {
-                    setTripName(value);
-                  }
-                }}
-                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/40 sm:w-1/2"
-                disabled={isLoadingTrips}
+              <div
+                ref={tripDropdownRef}
+                className="relative w-full sm:w-1/2"
               >
-                {tripOptions.length > 0 && (
-                  <>
-                    {tripOptions.map((trip) => (
-                      <option key={trip} value={trip}>
-                        {trip}
-                      </option>
-                    ))}
-                    <option value="new">Nový trip…</option>
-                  </>
+                <button
+                  type="button"
+                  onClick={() => setIsTripDropdownOpen((o) => !o)}
+                  disabled={isLoadingTrips}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-left text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/40 disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-haspopup="listbox"
+                  aria-expanded={isTripDropdownOpen}
+                >
+                  <span className="truncate">
+                    {selectedTripOption
+                      ? selectedTripOption
+                      : tripOptions.length === 0
+                        ? "Nový trip…"
+                        : "Nový trip…"}
+                  </span>
+                  <svg
+                    className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${
+                      isTripDropdownOpen ? "rotate-180" : ""
+                    }`}
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </button>
+                {isTripDropdownOpen && (
+                  <ul
+                    role="listbox"
+                    className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-slate-700 bg-slate-900 py-1 shadow-xl ring-1 ring-black/40"
+                  >
+                    {tripOptions.map((trip) => {
+                      const isActive = selectedTripOption === trip;
+                      return (
+                        <li key={trip} role="option" aria-selected={isActive}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedTripOption(trip);
+                              setTripName(trip);
+                              setIsTripDropdownOpen(false);
+                            }}
+                            className={`block w-full truncate px-3 py-2 text-left text-sm transition ${
+                              isActive
+                                ? "bg-sky-500/20 text-sky-100"
+                                : "text-slate-200 hover:bg-slate-800"
+                            }`}
+                          >
+                            {trip}
+                          </button>
+                        </li>
+                      );
+                    })}
+                    {tripOptions.length > 0 && (
+                      <li role="separator" aria-hidden="true">
+                        <div className="my-1 border-t border-slate-700/70" />
+                      </li>
+                    )}
+                    <li
+                      role="option"
+                      aria-selected={selectedTripOption === ""}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTripOption("");
+                          setTripName("");
+                          setIsTripDropdownOpen(false);
+                        }}
+                        className="block w-full truncate px-3 py-2 text-left text-sm italic text-slate-300 transition hover:bg-slate-800"
+                      >
+                        Nový trip…
+                      </button>
+                    </li>
+                  </ul>
                 )}
-                {tripOptions.length === 0 && (
-                  <option value="new">Nový trip…</option>
-                )}
-              </select>
+              </div>
 
               <input
                 type="text"
