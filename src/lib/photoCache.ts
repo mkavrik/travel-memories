@@ -170,7 +170,9 @@ export async function ensureAllCaches(
     decodedBuffer = buffer;
   }
 
-  const pipeline = sharp(decodedBuffer);
+  // .rotate() bez argumentu auto-aplikuje EXIF Orientation a tag odstraní —
+  // bez toho by JPEGy s Orientation ∈ {2..8} skončily v cache otočené.
+  const pipeline = sharp(decodedBuffer).rotate();
   const suffixes = [CACHE_SUFFIX_THUMB, CACHE_SUFFIX_DISPLAY] as const;
 
   await Promise.all([
