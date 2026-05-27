@@ -1,5 +1,5 @@
 import { revalidatePath } from "next/cache";
-import { createSupabaseClient } from "@/lib/supabase";
+import { createSupabaseServiceClient } from "@/lib/supabase";
 import {
   getCachedDayData,
   getCachedPhotoUrls,
@@ -32,7 +32,7 @@ async function warmCache(): Promise<ReadableStream> {
       const send = (obj: { message?: string; [key: string]: unknown }) =>
         controller.enqueue(encoder.encode(ndjsonLine(obj)));
       try {
-        const supabase = createSupabaseClient();
+        const supabase = createSupabaseServiceClient();
         const tripNames = await getTripNames();
         let tripCount = 0;
         let dayCount = 0;

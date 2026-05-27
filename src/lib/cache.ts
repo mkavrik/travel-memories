@@ -14,7 +14,7 @@ import {
   listTripPrefixes,
   objectExists,
 } from "@/lib/r2";
-import { createSupabaseClient } from "@/lib/supabase";
+import { createSupabaseClient, createSupabaseServiceClient } from "@/lib/supabase";
 import type { TrailStatsFile } from "@/lib/trailMap";
 import { getStreamVideoDetails } from "@/lib/cloudflareStream";
 import { readMetaCapturedAt } from "@/lib/photoCache";
@@ -193,10 +193,11 @@ export async function getCachedTripData(
   const tR2 = Date.now();
   const loaded = await loadTripFromR2(tripName);
   console.log(`Cache MISS: ${key} (R2 load ${Date.now() - tR2} ms)`);
-  if (supabase) {
+  const writeClient = createSupabaseServiceClient();
+  if (writeClient) {
     try {
       const tWrite = Date.now();
-      const { error: upsertError } = await supabase.from("trips_cache").upsert(
+      const { error: upsertError } = await writeClient.from("trips_cache").upsert(
         {
           trip_name: tripName,
           cover_url: loaded.coverUrl,
@@ -455,10 +456,11 @@ export async function getCachedDayData(
   const tR2 = Date.now();
   const loaded = await loadDayFromR2(tripName, date);
   console.log(`Cache MISS: ${key} (R2 load ${Date.now() - tR2} ms)`);
-  if (supabase) {
+  const writeClient = createSupabaseServiceClient();
+  if (writeClient) {
     try {
       const tWrite = Date.now();
-      const { error: upsertError } = await supabase.from("days_cache").upsert(
+      const { error: upsertError } = await writeClient.from("days_cache").upsert(
         {
           trip_name: tripName,
           date,
@@ -710,14 +712,15 @@ export async function getCachedPhotoUrls(
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + CACHE_TTL_DAYS);
 
-  if (supabase) {
+  const writeClient = createSupabaseServiceClient();
+  if (writeClient) {
     try {
       const tWrite = Date.now();
       let writeOk = true;
       for (const p of loaded) {
         const filename = p.key.split("/").pop() ?? "";
         const base = filename.replace(/_display\.jpg$/i, "");
-        const { error: upsertError } = await supabase.from("photo_urls_cache").upsert(
+        const { error: upsertError } = await writeClient.from("photo_urls_cache").upsert(
           {
             trip_name: tripName,
             date,
@@ -770,8 +773,11 @@ export async function invalidateCache(
   tripName: string,
   date?: string | null,
 ): Promise<void> {
-  const supabase = createSupabaseClient();
-  if (!supabase) return;
+  const supabase = createSupabaseServiceClient();
+  if (!supabase) {
+    console.error("invalidateCache: SUPABASE_SERVICE_ROLE_KEY missing — cache not invalidated");
+    return;
+  }
   if (date) {
     await supabase.from("days_cache").delete().eq("trip_name", tripName).eq("date", date);
     await supabase.from("photo_urls_cache").delete().eq("trip_name", tripName).eq("date", date);
