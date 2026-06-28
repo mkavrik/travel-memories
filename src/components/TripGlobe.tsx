@@ -94,11 +94,7 @@ export default function TripGlobe({ trips }: Props) {
     // Label
     const label = document.createElement("div");
     label.className = "globe-pin-label";
-    const shortName = marker.name
-      .replace(/^\d{2}_\d{4}\s*/, "")
-      .split(/\s+/)
-      .slice(0, 2)
-      .join(" ");
+    const shortName = marker.name.replace(/^\d{2}_\d{4}\s*/, "");
     label.textContent = shortName;
     container.appendChild(label);
 
