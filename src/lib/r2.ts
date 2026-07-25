@@ -1,6 +1,7 @@
 import {
   S3Client,
   ListObjectsV2Command,
+  ListObjectsV2CommandOutput,
   GetObjectCommand,
   PutObjectCommand,
   DeleteObjectCommand,
@@ -96,20 +97,29 @@ export async function listTripPrefixes(client: S3Client): Promise<string[]> {
     throw new Error("R2 bucket name is not configured.");
   }
 
-  const res = await client.send(
-    new ListObjectsV2Command({
-      Bucket: bucketName,
-      Prefix: "trips/",
-      Delimiter: "/",
-    }),
-  );
+  const prefixes: string[] = [];
+  let ContinuationToken: string | undefined = undefined;
+  do {
+    const res: ListObjectsV2CommandOutput = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucketName,
+        Prefix: "trips/",
+        Delimiter: "/",
+        ContinuationToken,
+      }),
+    );
+    for (const p of res.CommonPrefixes ?? []) {
+      prefixes.push(p.Prefix || "");
+    }
+    ContinuationToken = res.IsTruncated
+      ? res.NextContinuationToken
+      : undefined;
+  } while (ContinuationToken);
 
-  return (
-    res.CommonPrefixes?.map((p) => p.Prefix || "")
-      .filter((prefix) => prefix.startsWith("trips/") && prefix !== "trips/")
-      .map((prefix) => prefix.replace(/^trips\//, "").replace(/\/$/, ""))
-      .filter((name) => name.length > 0) ?? []
-  );
+  return prefixes
+    .filter((prefix) => prefix.startsWith("trips/") && prefix !== "trips/")
+    .map((prefix) => prefix.replace(/^trips\//, "").replace(/\/$/, ""))
+    .filter((name) => name.length > 0);
 }
 
 export async function listObjects(
@@ -120,14 +130,23 @@ export async function listObjects(
     throw new Error("R2 bucket name is not configured.");
   }
 
-  const res = await client.send(
-    new ListObjectsV2Command({
-      Bucket: bucketName,
-      Prefix: prefix,
-    }),
-  );
+  const all: _Object[] = [];
+  let ContinuationToken: string | undefined = undefined;
+  do {
+    const res: ListObjectsV2CommandOutput = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucketName,
+        Prefix: prefix,
+        ContinuationToken,
+      }),
+    );
+    if (res.Contents) all.push(...res.Contents);
+    ContinuationToken = res.IsTruncated
+      ? res.NextContinuationToken
+      : undefined;
+  } while (ContinuationToken);
 
-  return res.Contents ?? [];
+  return all;
 }
 
 export async function getTextObject(

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { S3Client } from "@aws-sdk/client-s3";
 import {
   createR2Client,
   listObjects,
@@ -13,6 +14,7 @@ import { invalidateCache } from "@/lib/cache";
 export const runtime = "nodejs";
 
 const BLOG_POST_FILENAME = "blog_post.txt";
+const PREPIS_CLEAN_KEY = "prepis_clean.txt";
 
 function blogPostKey(tripName: string, date: string): string {
   const safeTrip = tripName.trim();
@@ -24,6 +26,58 @@ function notesPrefix(tripName: string, date: string): string {
   const safeTrip = tripName.trim();
   const safeDate = date.trim();
   return `trips/${safeTrip}/${safeDate}/notes/`;
+}
+
+/**
+ * Sestaví vstup pro blog post agenta z obou zdrojů dne: textové poznámky
+ * (notes/*.md|.txt) + přepis audia (outputs/prepis_clean.txt). Každý blok se
+ * olabeluje, aby agent rozlišil původ. Selže jen když nejsou žádné vstupy.
+ */
+async function buildDayBlogInput(
+  client: S3Client,
+  tripName: string,
+  date: string,
+): Promise<{ input: string } | { error: string }> {
+  const parts: string[] = [];
+
+  // 1. Textové poznámky: trips/[trip]/[date]/notes/*.md|.txt
+  const noteObjects = await listObjects(client, notesPrefix(tripName, date));
+  const noteKeys = noteObjects
+    .map((o) => o.Key)
+    .filter((key): key is string => {
+      if (!key) return false;
+      const lower = key.toLowerCase();
+      return lower.endsWith(".md") || lower.endsWith(".txt");
+    })
+    .sort();
+
+  if (noteKeys.length > 0) {
+    const noteParts: string[] = [];
+    for (const key of noteKeys) {
+      const text = await getTextObject(client, key);
+      if (text?.trim()) noteParts.push(text.trim());
+    }
+    if (noteParts.length > 0) {
+      parts.push("[POZNÁMKY]\n\n" + noteParts.join("\n\n"));
+    }
+  }
+
+  // 2. Přepis audia: trips/[trip]/[date]/outputs/prepis_clean.txt
+  const prepisKey = `trips/${tripName.trim()}/${date.trim()}/outputs/${PREPIS_CLEAN_KEY}`;
+  const prepis = await getTextObject(client, prepisKey);
+  if (prepis?.trim()) {
+    parts.push("[PŘEPIS AUDIA]\n\n" + prepis.trim());
+  }
+
+  const input = parts.join("\n\n---\n\n");
+  if (!input.trim()) {
+    return {
+      error:
+        "Pro zadaný den nebyly nalezeny žádné vstupy (poznámky ve složce notes ani přepis audia prepis_clean.txt v outputs).",
+    };
+  }
+
+  return { input };
 }
 
 export async function POST(request: Request) {
@@ -52,43 +106,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ hadExisting: existed }, { status: 200 });
     }
 
-    const prefix = notesPrefix(tripName, date);
-    const objects = await listObjects(client, prefix);
-
-    const noteKeys = objects
-      .map((o) => o.Key)
-      .filter((key): key is string => {
-        if (!key) return false;
-        const lower = key.toLowerCase();
-        return lower.endsWith(".md") || lower.endsWith(".txt");
-      })
-      .sort();
-
-    if (noteKeys.length === 0) {
-      return NextResponse.json(
-        {
-          error:
-            "Pro zadaný den nebyly nalezeny žádné poznámky (.md nebo .txt ve složce notes).",
-        },
-        { status: 404 },
-      );
+    const inputResult = await buildDayBlogInput(client, tripName, date);
+    if ("error" in inputResult) {
+      return NextResponse.json({ error: inputResult.error }, { status: 404 });
     }
-
-    const parts: string[] = [];
-    for (const key of noteKeys) {
-      const text = await getTextObject(client, key);
-      if (text) {
-        parts.push(text.trim());
-      }
-    }
-
-    const notes = parts.join("\n\n");
-    if (!notes.trim()) {
-      return NextResponse.json(
-        { error: "Soubory s poznámkami jsou prázdné." },
-        { status: 400 },
-      );
-    }
+    const notes = inputResult.input;
 
     const existedBefore = await objectExists(client, key);
     if (existedBefore) {

@@ -316,7 +316,8 @@ export default function UploadPage() {
   }, [tripName]);
 
   useEffect(() => {
-    if (sectionType !== "day" || !tripName?.trim() || !date?.trim()) {
+    const gpxDate = sectionType === "summary" ? "summary" : date?.trim();
+    if (!tripName?.trim() || !gpxDate) {
       setGpxFiles([]);
       setGpxConfigs([]);
       return;
@@ -325,7 +326,7 @@ export default function UploadPage() {
     async function check() {
       try {
         const res = await fetch(
-          `/api/check-gpx?tripName=${encodeURIComponent(tripName.trim())}&date=${encodeURIComponent(date.trim())}`,
+          `/api/check-gpx?tripName=${encodeURIComponent(tripName.trim())}&date=${encodeURIComponent(gpxDate!)}`,
         );
         const data = (await res.json()) as {
           hasGpx?: boolean;
@@ -435,12 +436,15 @@ export default function UploadPage() {
   async function handleGenerateTrailMap() {
     setTrailMapResult(null);
     setTrailMapProgress(null);
-    if (!tripName?.trim() || !date?.trim()) {
-      setTrailMapResult({ error: "Zadej trip a datum." });
+    const effectiveDate = sectionType === "summary" ? "summary" : date?.trim();
+    if (!tripName?.trim() || !effectiveDate) {
+      setTrailMapResult({
+        error: sectionType === "summary" ? "Zadej trip." : "Zadej trip a datum.",
+      });
       return;
     }
     if (gpxConfigs.length === 0) {
-      setTrailMapResult({ error: "Pro tento den není žádný GPX soubor." });
+      setTrailMapResult({ error: "Pro tuto sekci není žádný GPX soubor." });
       return;
     }
     setIsGeneratingTrailMap(true);
@@ -450,7 +454,7 @@ export default function UploadPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tripName: tripName.trim(),
-          date: date.trim(),
+          date: effectiveDate,
           routes: gpxConfigs.map((c) => ({
             gpxFilename: c.filename,
             routeType: c.routeType,
@@ -1668,16 +1672,20 @@ export default function UploadPage() {
             </div>
           )}
 
-          {sectionType === "day" && (
+          {(sectionType === "day" || sectionType === "summary") && (
             <div className="space-y-3 border-t border-slate-800 pt-4">
               <p className="text-xs font-medium text-slate-300">
                 Mapy tras (GPX)
               </p>
-              {gpxFiles.length === 0 && tripName && date && (
-                <p className="text-xs text-slate-500">
-                  Pro tento den není v R2 žádný GPX soubor ve složce map.
-                </p>
-              )}
+              {gpxFiles.length === 0 &&
+                tripName &&
+                (sectionType === "summary" || date) && (
+                  <p className="text-xs text-slate-500">
+                    {sectionType === "summary"
+                      ? "Pro summary tripu není v R2 žádný GPX soubor ve složce map."
+                      : "Pro tento den není v R2 žádný GPX soubor ve složce map."}
+                  </p>
+                )}
               {gpxConfigs.length > 0 && (
                 <div className="space-y-2">
                   {gpxConfigs.map((cfg) => (

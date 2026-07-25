@@ -1,9 +1,15 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { getCachedTripData, getCachedTripDays, getCachedPhotoUrls } from "@/lib/cache";
+import {
+  getCachedTripData,
+  getCachedTripDays,
+  getCachedPhotoUrls,
+  getCachedDayData,
+} from "@/lib/cache";
 import { HeroBackgroundImage } from "@/components/HeroBackgroundImage";
 import { DayGallery } from "@/components/DayGallery";
 import { MarkdownProse } from "@/components/MarkdownProse";
+import { RouteCard } from "@/components/RouteCard";
 
 type Params = {
   trip: string;
@@ -28,11 +34,13 @@ function getTripShortName(name: string): string {
 
 async function getTripData(tripParam: string) {
   const tripName = decodeURIComponent(tripParam);
-  const [tripData, days, summaryGalleryPhotos] = await Promise.all([
-    getCachedTripData(tripName),
-    getCachedTripDays(tripName),
-    getCachedPhotoUrls(tripName, "summary"),
-  ]);
+  const [tripData, days, summaryGalleryPhotos, summaryDayData] =
+    await Promise.all([
+      getCachedTripData(tripName),
+      getCachedTripDays(tripName),
+      getCachedPhotoUrls(tripName, "summary"),
+      getCachedDayData(tripName, "summary"),
+    ]);
 
   if (days.length === 0 && !tripData.summaryText) {
     notFound();
@@ -49,6 +57,7 @@ async function getTripData(tripParam: string) {
       displayUrl: p.displayUrl,
       capturedAt: p.capturedAt,
     })),
+    summaryRoutes: summaryDayData?.routes ?? [],
     days,
   };
 }
@@ -58,8 +67,15 @@ export default async function TripPage({
 }: {
   params: Params;
 }) {
-  const { tripName, heroUrl, heroFocusY, summaryText, summaryGalleryPhotos, days } =
-    await getTripData(params.trip);
+  const {
+    tripName,
+    heroUrl,
+    heroFocusY,
+    summaryText,
+    summaryGalleryPhotos,
+    summaryRoutes,
+    days,
+  } = await getTripData(params.trip);
 
   return (
     <main className="min-h-screen flex flex-col bg-[#050509] text-slate-50 md:h-screen md:overflow-hidden">
@@ -176,6 +192,31 @@ export default async function TripPage({
                   photos={summaryGalleryPhotos}
                 />
               </div>
+            )}
+
+            {/* Trasy */}
+            {summaryRoutes.length > 0 && (
+              <section id="trasy" className="scroll-mt-6 space-y-4">
+                <h2 className="font-dela text-lg text-[var(--ink)]">
+                  {summaryRoutes.length === 1 ? "Trasa" : "Trasy"}
+                </h2>
+                <div className="space-y-5">
+                  {summaryRoutes.map((route, idx) => {
+                    const heading =
+                      route.name?.trim() ||
+                      (route.routeType === "car"
+                        ? "Přejezd autem"
+                        : `Trasa ${idx + 1}`);
+                    return (
+                      <RouteCard
+                        key={route.slug}
+                        route={route}
+                        heading={heading}
+                      />
+                    );
+                  })}
+                </div>
+              </section>
             )}
           </div>
         </div>

@@ -87,7 +87,7 @@ export async function generateBlogPost(
   params: GenerateBlogPostParams,
 ): Promise<string> {
   const { notes, date, tripName } = params;
-  const userMessage = `Trip: ${tripName}\nDatum: ${date}\n\nPoznámky z dne:\n\n${notes}`;
+  const userMessage = `Trip: ${tripName}\nDatum: ${date}\n\nVstupy z dne (textové poznámky a/nebo přepis audia, olabelované):\n\n${notes}`;
   const systemLength = CREATIVE_SYSTEM_PROMPT.length;
   const inputLength = userMessage.length;
   const estimatedTokens = Math.round((systemLength + inputLength) / 4);
