@@ -20,19 +20,62 @@ import { getStreamVideoDetails } from "@/lib/cloudflareStream";
 import { readMetaCapturedAt } from "@/lib/photoCache";
 
 /**
- * Supabase cache je považovaná za platnou pokud řádek existuje —
- * žádná TTL-based eviction při čtení. Freshness drží:
+ * Supabase cache drží podepsané R2 URL, které mají max 7denní platnost
+ * (S3 SigV4 limit). Freshness zajišťují tři vrstvy:
  *   1) invalidateCache při zápisu (upload, hero, blog edit…)
- *   2) denní Vercel cron /api/warm-cache, který force-refreshuje
- *      všechny řádky (viz vercel.json)
+ *   2) denní Vercel cron /api/warm-cache, který force-refreshuje řádky
+ *      (viz vercel.json)
+ *   3) age-aware čtení — řádek starší než MAX_ROW_AGE_DAYS se čte jako
+ *      MISS a přepodepíše se z R2
  *
- * Pozor: podepsané R2 URL v cache mají max 7denní platnost (S3 SigV4
- * limit). Pokud by cron selhával > 7 dní, URL by expirovaly a fotky
- * začnou vracet 403. CACHE_TTL_DAYS nechává stará (pre-cron) data
- * nastavit expires_at pro backwards compat, ale čte se bez filtru.
+ * Vrstva 3 je bezpečnostní síť pod vrstvou 2. Bez ní stačí, aby cron
+ * na nějaký trip nedosáhl 7 dní v řadě, a jeho URL začnou vracet 403 —
+ * přesně to se stalo tripu "Surf v Portugalsku" (cron narazil na
+ * maxDuration dřív, než se k němu abecedně dostal). Řádek existoval,
+ * takže se pořád četl jako HIT a nikdy se neobnovil.
+ *
+ * MAX_ROW_AGE_DAYS < 7 s rezervou: refresh proběhne dřív, než podpis
+ * vyprší, i když cron vypadne na pár dní.
  */
 const CACHE_TTL_DAYS = 7;
+const MAX_ROW_AGE_DAYS = 5;
 const SIGNED_URL_EXPIRY_SEC = 604800; // 7 days (S3 SigV4 max)
+
+const MAX_ROW_AGE_MS = MAX_ROW_AGE_DAYS * 24 * 60 * 60 * 1000;
+
+/** Souběžnost R2 round tripů při načítání fotek jedné sekce. */
+const PHOTO_LOAD_CONCURRENCY = 8;
+
+/**
+ * Je řádek cache tak starý, že jeho podepsané URL brzy vyprší?
+ * Chybějící/nečitelný `updated_at` je považován za stale — radši
+ * jeden R2 load navíc než 403 na produkci.
+ */
+function isRowStale(updatedAt: unknown): boolean {
+  if (typeof updatedAt !== "string") return true;
+  const t = Date.parse(updatedAt);
+  if (!Number.isFinite(t)) return true;
+  return Date.now() - t > MAX_ROW_AGE_MS;
+}
+
+/** Paralelní map s limitem souběžnosti — R2 round tripy jsou latency-bound. */
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
 function thumbCacheKey(photosPrefix: string, filename: string): string {
   const base = filename.replace(/\.[^.]+$/, "");
@@ -175,7 +218,11 @@ export async function getCachedTripData(
       if (selectError) {
         console.error(`Cache Supabase SELECT error [${key}]:`, selectError);
       }
-      if (row) {
+      if (row && isRowStale(row.updated_at)) {
+        console.log(
+          `Cache STALE: ${key} (updated_at=${row.updated_at}) — přepodepisuji z R2`,
+        );
+      } else if (row) {
         console.log(`Cache HIT: ${key} (Supabase ${ms} ms)`);
         return {
           coverUrl: row.cover_url ?? null,
@@ -224,6 +271,40 @@ export async function getCachedTripData(
 export async function getTripNames(): Promise<string[]> {
   const client = createR2Client();
   return listTripPrefixes(client);
+}
+
+/**
+ * Názvy tripů seřazené od nejdéle neobnoveného (chybějící řádek = nejvyšší
+ * priorita). Warm-cache je zpracovává v tomhle pořadí, takže když narazí na
+ * maxDuration, přeskočí se ten nejčerstvější — a nedokončený trip je příští
+ * běh naopak první na řadě.
+ *
+ * Předtím se iterovalo abecedně, což znamenalo, že poslední trip v pořadí
+ * ("Surf v Portugalsku") nebyl obnoven ani jednou za 10 dní a jeho podepsaná
+ * cover URL po 7 dnech vypršela.
+ */
+export async function getTripNamesStaleFirst(): Promise<string[]> {
+  const tripNames = await getTripNames();
+  const supabase = createSupabaseClient();
+  if (!supabase) return tripNames;
+
+  const freshness = new Map<string, number>();
+  try {
+    const { data: rows } = await supabase
+      .from("trips_cache")
+      .select("trip_name, updated_at");
+    for (const r of rows ?? []) {
+      const t = Date.parse(r.updated_at ?? "");
+      freshness.set(r.trip_name, Number.isFinite(t) ? t : 0);
+    }
+  } catch (e) {
+    console.error("getTripNamesStaleFirst: Supabase select failed:", e);
+    return tripNames;
+  }
+
+  return tripNames
+    .slice()
+    .sort((a, b) => (freshness.get(a) ?? 0) - (freshness.get(b) ?? 0));
 }
 
 // --- Day cache ---
@@ -431,7 +512,11 @@ export async function getCachedDayData(
       if (selectError) {
         console.error(`Cache Supabase SELECT error [${key}]:`, selectError);
       }
-      if (row) {
+      if (row && isRowStale(row.updated_at)) {
+        console.log(
+          `Cache STALE: ${key} (updated_at=${row.updated_at}) — přepodepisuji z R2`,
+        );
+      } else if (row) {
         console.log(`Cache HIT: ${key} (Supabase ${ms} ms)`);
         return {
           coverUrl: row.cover_url ?? null,
@@ -552,9 +637,13 @@ export async function getCachedTripDays(
     try {
       const { data: rows } = await supabase
         .from("days_cache")
-        .select("date, cover_url")
+        .select("date, cover_url, updated_at")
         .eq("trip_name", tripName);
       for (const r of rows ?? []) {
+        // Stale řádek přeskočíme — getCachedDayData ho níž načte znovu
+        // z R2 s čerstvým podpisem. Jinak by sidebar tripu servíroval
+        // thumbnaily s URL po expiraci (403).
+        if (isRowStale(r.updated_at)) continue;
         freshCovers.set(r.date, r.cover_url ?? null);
       }
     } catch (e) {
@@ -619,14 +708,11 @@ async function loadPhotoUrlsFromR2(
     if (!byBasename.has(base)) byBasename.set(base, key);
   }
   const keys = Array.from(byBasename.values());
-  const result: {
-    key: string;
-    url: string;
-    displayUrl: string;
-    thumbUrl: string;
-    capturedAt: string | null;
-  }[] = [];
-  for (const displayKey of keys) {
+
+  // Per fotku jsou to 2–3 R2 round tripy (HEAD thumb + GET meta sidecar).
+  // Sériově to u dne se 150 fotkami dělalo ~90 s a bylo hlavním důvodem,
+  // proč warm-cache nestihl projít všechny tripy do maxDuration.
+  return mapLimit(keys, PHOTO_LOAD_CONCURRENCY, async (displayKey) => {
     const url = await getSignedR2Url(
       client,
       displayKey,
@@ -661,15 +747,14 @@ async function loadPhotoUrlsFromR2(
       }
     }
 
-    result.push({
+    return {
       key: displayKey,
       url,
       displayUrl: url,
       thumbUrl,
       capturedAt,
-    });
-  }
-  return result;
+    };
+  });
 }
 
 export async function getCachedPhotoUrls(
@@ -684,14 +769,21 @@ export async function getCachedPhotoUrls(
       const t0 = Date.now();
       const { data: rows, error: selectError } = await supabase
         .from("photo_urls_cache")
-        .select("filename, display_url, thumb_url, captured_at")
+        .select("filename, display_url, thumb_url, captured_at, updated_at")
         .eq("trip_name", tripName)
         .eq("date", date);
       const ms = Date.now() - t0;
       if (selectError) {
         console.error(`Cache Supabase SELECT error [${key}]:`, selectError);
       }
-      if (rows && rows.length > 0) {
+      // Sada řádků je platná jen tak, jak je starý její nejstarší člen —
+      // jinak by v galerii část fotek fungovala a část vracela 403.
+      const stale =
+        rows?.some((r) => isRowStale((r as { updated_at?: unknown }).updated_at)) ??
+        false;
+      if (rows && rows.length > 0 && stale) {
+        console.log(`Cache STALE: ${key} (${rows.length} photos) — přepodepisuji z R2`);
+      } else if (rows && rows.length > 0) {
         console.log(`Cache HIT: ${key} (${rows.length} photos, Supabase ${ms} ms)`);
         return rows.map((r) => ({
           key: r.filename,
@@ -716,31 +808,37 @@ export async function getCachedPhotoUrls(
   if (writeClient) {
     try {
       const tWrite = Date.now();
-      let writeOk = true;
-      for (const p of loaded) {
+      const now = new Date().toISOString();
+      // Jeden batch upsert místo N sekvenčních round tripů — u dne
+      // se 150 fotkami to byl dominantní podíl doby běhu warm-cache.
+      const payload = loaded.map((p) => {
         const filename = p.key.split("/").pop() ?? "";
         const base = filename.replace(/_display\.jpg$/i, "");
-        const { error: upsertError } = await writeClient.from("photo_urls_cache").upsert(
-          {
-            trip_name: tripName,
-            date,
-            filename: base,
-            display_url: p.displayUrl,
-            thumb_url: p.thumbUrl,
-            captured_at: p.capturedAt,
-            expires_at: expiresAt.toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "trip_name,date,filename" },
-        );
+        return {
+          trip_name: tripName,
+          date,
+          filename: base,
+          display_url: p.displayUrl,
+          thumb_url: p.thumbUrl,
+          captured_at: p.capturedAt,
+          expires_at: expiresAt.toISOString(),
+          updated_at: now,
+        };
+      });
+      let writeOk = true;
+      if (payload.length > 0) {
+        const { error: upsertError } = await writeClient
+          .from("photo_urls_cache")
+          .upsert(payload, { onConflict: "trip_name,date,filename" });
         if (upsertError) {
           console.error(`Cache Supabase UPSERT error [${key}]:`, upsertError);
           writeOk = false;
-          break;
         }
       }
       if (writeOk) {
-        console.log(`Cache WRITE: ${key} (Supabase ${Date.now() - tWrite} ms)`);
+        console.log(
+          `Cache WRITE: ${key} (${payload.length} photos, Supabase ${Date.now() - tWrite} ms)`,
+        );
       }
     } catch (e) {
       console.error(`Cache Supabase exception [${key}] (upsert):`, e);

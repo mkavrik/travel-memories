@@ -91,12 +91,17 @@ ZPRACOVÁNÍ (tlačítka na /upload stránce)
   └─────────────────────────────────────────────┘
         ↓
 SUPABASE (caching)
-  Trips, dny, fotky, blog posty cachované bez TTL — freshness drží
-  invalidace při zápisu (upload, hero, blog edit) + Vercel cron
-  /api/warm-cache 1× denně (04:00 UTC), který smaže řádky a znovu
-  naplní s čerstvými podepsanými R2 URL. Max 7 dní je S3 SigV4 cap
-  pro podepsané URL — bez cronu by URL po týdnu expirovaly (403).
-  Manuální warming přes tlačítko "Zahřát cache" na /upload.
+  Trips, dny, fotky, blog posty. Freshness drží tři vrstvy:
+    1) invalidace při zápisu (upload, hero, blog edit)
+    2) Vercel cron /api/warm-cache 1× denně (04:00 UTC), který smaže
+       řádky a znovu naplní s čerstvými podepsanými R2 URL
+    3) age-aware čtení — řádek starší než 5 dní se čte jako MISS
+       a přepodepíše se z R2 (pojistka pod vrstvou 2)
+  Max 7 dní je S3 SigV4 cap pro podepsané URL — bez obnovy by URL
+  po týdnu expirovaly (403). Cron jde po tripech od nejdéle
+  neobnoveného, takže případný timeout nepostihne opakovaně tentýž
+  trip. Manuální warming přes tlačítko "Zahřát cache" na /upload,
+  cílený refresh jednoho tripu přes /api/warm-cache?trip=NÁZEV.
   Warm-cache mažea repopuluje data podle source-of-truth z R2:
   bulk DELETE per celý trip (žádný eq na `date`) + iteruje sekce
   vrácené `getTripSections()` (YYYY-MM-DD dny + summary + cokoli
@@ -433,6 +438,12 @@ Mimo kód, aby produkční upload fungoval, musí být v pořádku:
 | `SUPABASE_SERVICE_ROLE_KEY` | zápis do cache (obchází RLS) | ✅ |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `MAPY_CZ_API_KEY` / `MAPY_CZ_ID_API_KEY` | agenti a mapy | ✅ / ✅ / ne / ne |
 
+### Produkční URL
+
+**`https://travel-memories-coral.vercel.app`** (Vercel projekt `travel-memories`).
+Pozor: `travel-memories.vercel.app` bez suffixu je cizí web — patří někomu jinému
+a přesměrovává na `/auth`. Nepleť si je při testování produkce.
+
 ### R2 bucket CORS
 
 Prohlížeč PUTuje přímo na `https://<account>.r2.cloudflarestorage.com`. Bez CORS to browser zablokuje. V Cloudflare Dashboard → R2 → `travel-memories` → Settings → CORS policy:
@@ -441,7 +452,7 @@ Prohlížeč PUTuje přímo na `https://<account>.r2.cloudflarestorage.com`. Bez
 [
   {
     "AllowedOrigins": [
-      "https://travel-memories.vercel.app",
+      "https://travel-memories-coral.vercel.app",
       "https://*.vercel.app",
       "http://localhost:3000"
     ],
@@ -490,7 +501,7 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - [ ] Instagram agent – generování popisků a výběr fotek
 - [ ] Rozšíření pro ostatní cestovatele
 - [ ] Odhadovaná doba trvání trasy pěší – Mapy.cz Route API nepodporuje ski ani hiking routeType
-- [ ] **Vlastní doména + CDN před R2 pro sdílené cachování fotek** — pořídit `xar.travel` (TLD `.travel` je dražší, ~$100+/rok; registrátoři: Cloudflare Registrar, Porkbun, Namecheap), převést DNS na Cloudflare, napojit subdoménu `media.xar.travel` na R2 bucket přes Settings → Connect Custom Domain, přidat Cache Rule "Cache Everything" s Edge TTL 30 dní. Kód: `getSignedR2Url` pro fotky/hero/mapy nahradit deterministickým URL builderem (`https://media.xar.travel/{key}`), odstranit tabulku `photo_urls_cache` (URL se nemusí cachovat, jsou stabilní), invalidaci při přepisu fotky řešit Cloudflare Purge API. Celkově ~3 h focus work. **Přínos:** bajty fotek cached v ~300 Cloudflare edge POPech globálně — první návštěvník v regionu zaplatí R2 egress, další dostanou z edge cache. Doplňuje ISR + browser cache o sdílenou rychlost fotek napříč uživateli (to, co dnes chybí — dnes HTML je rychlé přes Vercel Edge, ale bajty fotek tahá každý nový návštěvník sám z R2). Samotný blog lze zároveň přestěhovat na `xar.travel` / `blog.xar.travel` místo `travel-memories.vercel.app`.
+- [ ] **Vlastní doména + CDN před R2 pro sdílené cachování fotek** — pořídit `xar.travel` (TLD `.travel` je dražší, ~$100+/rok; registrátoři: Cloudflare Registrar, Porkbun, Namecheap), převést DNS na Cloudflare, napojit subdoménu `media.xar.travel` na R2 bucket přes Settings → Connect Custom Domain, přidat Cache Rule "Cache Everything" s Edge TTL 30 dní. Kód: `getSignedR2Url` pro fotky/hero/mapy nahradit deterministickým URL builderem (`https://media.xar.travel/{key}`), odstranit tabulku `photo_urls_cache` (URL se nemusí cachovat, jsou stabilní), invalidaci při přepisu fotky řešit Cloudflare Purge API. Celkově ~3 h focus work. **Přínos:** bajty fotek cached v ~300 Cloudflare edge POPech globálně — první návštěvník v regionu zaplatí R2 egress, další dostanou z edge cache. Doplňuje ISR + browser cache o sdílenou rychlost fotek napříč uživateli (to, co dnes chybí — dnes HTML je rychlé přes Vercel Edge, ale bajty fotek tahá každý nový návštěvník sám z R2). Samotný blog lze zároveň přestěhovat na `xar.travel` / `blog.xar.travel` místo `travel-memories-coral.vercel.app`.
 - [ ] Smazat nepoužívané API `/api/profile-hero` (upload profilové fotky)
 - [x] Textový agent – vyladěný systémový prompt podle SKILL.md, model claude-opus-4-6
 - [x] Redesign blogu – 3D globus, tmavá paleta, sidebar navigace
@@ -519,6 +530,7 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 - [x] Zrušená TTL-based eviction Supabase cache — čte se bez kontroly stáří, freshness drží invalidace + Vercel cron (`vercel.json`) 1× denně na `/api/warm-cache`, který force-refreshuje všechny řádky. `warm-cache` teď maže řádky před repopulací (jinak by to byl no-op HIT) a přijímá GET (Vercel cron posílá GET).
 - [x] Day page nepotřebuje cover URL pro sousední dny — nová lehká `getTripDays()` vrací jen seznam dat z R2 listu. Předchozí `getCachedTripDays` při cold cache spouštěla plnou `loadDayFromR2` per každý den tripu sekvenčně (Norsko: 21 s, 100 API volání). Trip page stále používá `getCachedTripDays` ale nyní paralelizovaně přes `Promise.all`.
 - [x] EXIF capture time se čte server-side při `ensureAllCaches` a ukládá do `_meta.json` sidecar v `photos/cache/` + do `photo_urls_cache.captured_at` sloupce (migrace `004_photo_captured_at.sql`). DayGallery řadí podle server-hodnoty, klient už neparsuje EXIF přes `exifr.parse(url)` (30 fetchů za page render). Pro starší dny je potřeba re-run `convert-photos` (funkce je idempotentní — když thumb existuje ale meta chybí, dogeneruje jen meta).
+- [x] Fix: hero fotka tripu / ikonka tripu v sidebaru vracela 403 (Surf v Portugalsku). Cron `/api/warm-cache` zpracovával tripy abecedně a sériově, narazil na `maxDuration = 300` uprostřed předposledního tripu — poslední trip v pořadí se neobnovil ani jednou za 10 dní a jeho podepsaná `trips_cache.cover_url` po 7 dnech (SigV4 cap) expirovala. Protože se cache četla bez kontroly stáří (řádek existuje → HIT), rotoval tam navždy. Oprava ve třech krocích: (1) age-aware čtení — `isRowStale()` nad `updated_at` ve všech čtecích cestách (`getCachedTripData`, `getCachedDayData`, `getCachedTripDays`, `getCachedPhotoUrls`), řádek starší než `MAX_ROW_AGE_DAYS = 5` je MISS; (2) cron jde přes `getTripNamesStaleFirst()` — od nejdéle neobnoveného, plus deadline guard 45 s před limitem s hlášením přeskočených místo tvrdého SIGKILL; (3) zrychlení: `loadPhotoUrlsFromR2` paralelně (`mapLimit`, souběžnost 8 — per fotku to jsou 2–3 R2 round tripy), dny v tripu paralelně (souběžnost 3) a `photo_urls_cache` jedním batch upsertem místo N sekvenčních. Plný běh 5 tripů / 43 dní: >300 s (timeout) → **81 s**. Přidán `?trip=NÁZEV` pro cílený refresh a `revalidatePath("/blog")` (seznam tripů nese cover URL).
 - [x] Progress bar při výběru hero fotky (NDJSON streaming v `/api/select-hero-photo`) — listing → příprava náhledů N/M → done
 - [x] Odstranění Claude vision hero pickeru — žádná AI evaluace ani auto-výběr fotek. `/api/select-hero-photo` jen vrací kandidáty pro grid, manuální klik na náhled uloží přes `/api/set-hero-photo`. Smazán `heroPhotoAgent.ts`, `_ai.jpg` cache verze (konverze teď dělá jen thumb + display), odstraněno `reason` z hero_photo.json. `set-hero-photo` nově invaliduje cache + `revalidatePath` (předtím chybělo)
 - [x] Fix warm-cache: bulk delete per celý trip + sekce z R2 (`getTripSections`). Předtím cron iteroval `getTripDays()` (jen YYYY-MM-DD) a per-date mazal řádky, takže `photo_urls_cache` řádky s `date='summary'` se nikdy neresetovaly. Po 7 dnech podepsaná R2 URL v nich expirovala → 403 na summary fotkách (Norsko, fotka `rentgen`). Bulk delete bez `eq('date', X)` filtru pokrývá i jakékoli budoucí sekce mimo YYYY-MM-DD a summary.
@@ -533,5 +545,7 @@ Komfortní rozpočet: 5 EUR/den (reálně bude méně).
 *Poslední aktualizace: 24. dubna 2026 — řazení tripů na /blog podle data sestupně, lazy loading fotek/videí/map, day page jen lehký `getTripDays()` místo `getCachedTripDays` (Norsko 21 s → 1 s), zrušená TTL-based eviction Supabase cache + denní Vercel cron force-refresh na `/api/warm-cache` (`vercel.json`), server-side EXIF capture time v `_meta.json` + sloupec `photo_urls_cache.captured_at` (migrace 004) → správné řazení galerie bez klient-side exifr fetchů.*
 
 *5. května 2026 — fix warm-cache pro summary sekce: nová helper funkce `getTripSections()` (R2 = source of truth, vrací `{ days, hasSummary }`), bulk DELETE per celý trip bez `eq('date', X)` filtru, `revalidatePath` po refreshi proti Next.js fetch cache. Bug: Norsko summary fotka (`rentgen`) vracela 403, protože `getTripDays()` filtroval jen YYYY-MM-DD a řádek s `date='summary'` v `photo_urls_cache` cron nikdy nemazal — podepsaná URL po 7 dnech expirovala. Po opravě je systémově nemožné, aby cron přehlédl jakoukoli budoucí sekci.*
+
+*26. července 2026 — oprava expirovaných podepsaných URL. Hero fotka tripu „Surf v Portugalsku" na `/blog/[trip]` i jeho ikonka v seznamu na `/blog` vracely 403: obě čtou `trips_cache.cover_url`, jehož podpis byl z 16. 7. a 23. 7. vypršel. Příčina nebyla v datech (R2 mělo `hero_photo.json` i `IMG_1136_display.jpg` v pořádku), ale v tom, že se k tomu tripu cron nikdy nedostal — jel abecedně a sériově a `maxDuration = 300` ho zabil u předposledního tripu. Bez age-aware čtení pak stale řádek přežil libovolně dlouho. Opraveno na třech úrovních (age-aware čtení / stale-first pořadí + deadline guard / paralelizace a batch upserty), detail viz TODO výše. Ověřeno naostro proti produkční Supabase + R2: všech 5 tripů má cover 206, backdatovaný řádek se při renderu sám přepodepíše, plný běh warm-cache 81 s.*
 
 *18. května 2026 — tři drobné UX/data fixy. (1) `/upload` má custom scrollovatelný dropdown pro výběr tripu místo native `<select>`, který v menu ukazoval jen 2 z 3 cest. (2) Sidebar na blogu zobrazuje celý název tripu bez ořezání na N slov; `getTripShortName` napříč třemi blog stránkami už jen strippuje `MM_YYYY` prefix (předtím `.slice(0, 2)` na hlavní + `.slice(0, 3)` na detailu → "Ferraty na" vs "Ferraty na Gardě"). (3) `photoCache.ensureAllCaches` přidává `.rotate()` k sharp pipeline tak, aby aplikoval EXIF Orientation tag před resize a JPEG výstupem; bez toho JPEGy s Orientation ∈ {2..8} (typicky některé iPhone JPEGy z Mail share / screenshot extractů) skončily v cache otočené, protože sharp tag při výstupu strippuje. HEIC byl OK díky `heic-convert`, který rotaci bakuje do pixelů. Diagnostika přidána v `scripts/scan-orientation.mjs`, `scripts/fix-rotation.mjs`, `scripts/verify-rotation.mjs` — sken všech 305 originálů odhalil 5 postižených fotek v Southwest USA tripu, cache pro ně zregenerována + Supabase invalidován.*
